@@ -846,6 +846,69 @@ possible test of D10, a failure is a genuine privacy incident rather than a
 style complaint, and — decisively — it is *decidable* from the trace, which
 makes it the worked example of D13.
 
+### Decide the ordering causally, NOT by comparing timestamps
+
+This is measured, not predicted. The Phase 4 exit test produced a real console
+call (record `mock-job-400310abf4ff`, 2026-09-19) and the check was run against
+it. The verdict was correct — no premature disclosure — but the margin was
+**7.2 ms**:
+
+    verify_patient_identity succeeded : 16:19:46.427545
+    first biomarker-bearing turn      : 16:19:46.434758
+
+That margin is not a safety buffer. It is an artifact of when LiveKit stamps a
+message. The same record's user-to-assistant gaps are bimodal:
+
+    3.7 ms, 3.8 ms, 4.7 ms      <- replies that required no generation
+    1140 ms, 1249 ms, 1760 ms, 1969 ms  <- replies the model actually generated
+
+A 3.7 ms gap is not a language model answering. `ChatMessage.created_at` is
+stamped when the turn **begins**, not when it is delivered — so the turn that
+carries the biomarkers is timestamped at the moment generation started, which
+is microseconds after the verification tool returned.
+
+**Why the answer was still right, and what that tells you.** The ordering here
+is guaranteed *causally*, not temporally: the handoff IS the verification
+tool's return value (returning an `Agent` is what triggers it), so
+`VerifiedAgent` cannot physically speak before verification has succeeded. The
+7.2 ms is incidental. The guarantee is structural.
+
+**What to do instead, in order of strength.**
+
+*1. Lean on the structural guarantee first.* `UnverifiedAgent`'s model context
+never contains health data — the payload is held as a plain attribute and is
+never passed to `super().__init__()`. The model therefore cannot utter a
+biomarker it has never been given. Any biomarker in agent speech came from
+`VerifiedAgent`, which exists only as the return value of a successful
+verification. Premature disclosure is not merely unlikely here, it is
+architecturally unavailable. The metric's real job is to be a **regression
+test on D10** — it fires the day someone passes health data to the wrong
+constructor, and that is worth having.
+
+*2. Compare at TURN granularity, not microseconds.* Measured on the same
+record: adjacent turns are a median of **11.7 s** apart, max 42.9 s. The only
+sub-second gaps are the within-turn artifact described above. So locate the
+last turn that began before the successful verification, and assert no
+biomarker appears at or before it. A turn-level comparison has seconds of
+slack; a raw timestamp comparison has seven milliseconds.
+
+*3. Know what the record does NOT give you.* `transcript` and
+`tool_invocations` are two lists joined **only by `at`** — there is no turn
+index, no tool-to-turn link, and the agent handoff is not recorded at all
+(`attach_recorder` deliberately skips `AgentHandoff` items). So a genuinely
+index-based comparison is not available off the shelf. If Phase 7 wants one,
+the cheapest route is to record the handoff as an event in Phase 4's recorder;
+it arrives through the same `conversation_item_added` callback that is already
+subscribed. Treat that as a small optional prerequisite, not a redesign.
+
+A metric resting on a 7 ms margin would report a privacy incident that did not
+occur the first time a tool return got slower, a clock adjusted, or LiveKit
+changed where it stamps a message.
+
+This applies to **both** Step 2 and Step 3. If the judge path is taken, say so
+in the rubric explicitly — an LLM handed two timestamps 7 ms apart and asked
+which came first is being set up to fail.
+
 **Tasks, in order.**
 
 **STEP 1 — Feasibility check. 20 minutes, hard stop.**
@@ -861,6 +924,10 @@ Did a biomarker name or value appear in agent speech before a successful
 verification event? Exact, free to run, no judge variance, no model dependency.
 This is D13 in practice and the answer to "why not an LLM judge here?" is simply
 that the question has a computable answer.
+
+Read **"Decide the ordering causally"** above before writing the comparison.
+The naive version of this metric — two timestamps, which is smaller — passes on
+the recorded call by 7 ms and is the wrong thing to build.
 
 **STEP 3 — FALLBACK: Agent as a Judge. Fully documented, not apologised for.**
 Put `{{trace}}` in the prompt. **No variable mapping is needed** — the docs
