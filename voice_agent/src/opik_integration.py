@@ -68,6 +68,59 @@ ATTACHMENT_FLUSH_TIMEOUT_SECONDS = 15
 AUDIO_MIME_TYPES = {".ogg": "audio/vorbis", ".wav": "audio/wav"}
 
 
+# The online evaluation rule (Phase 7) is a trace-scope Python metric, and a
+# trace rule can only read the trace's ROOT objects -- input, output, metadata.
+# Verified empirically against a probe rule: the transcript lives in a span and
+# is simply not reachable from there. So the raw material the rule needs is
+# mirrored into metadata in bounded form, while the full transcript stays in its
+# span for humans reading the trace. Two audiences, two shapes.
+#
+# What is mirrored is deliberately NOT the answer. The sink supplies an ordering
+# fact that is cheap and structural -- which agent turns preceded a successful
+# verification -- and the rule does the semantic work of deciding whether any of
+# them disclosed a biomarker. Precomputing the verdict here would leave the rule
+# echoing rather than evaluating.
+MAX_DISCLOSURE_TURNS = 60
+MAX_DISCLOSURE_TURN_CHARS = 400
+
+VERIFY_TOOL = "verify_patient_identity"
+VERIFIED_RESULT = "verified"
+
+
+def _disclosure_check_payload(record: CallRecord) -> dict[str, Any]:
+    """Agent turns, each flagged with whether it preceded verification.
+
+    Ordering is decided at TURN granularity, not by comparing raw timestamps.
+    Measured on a real call, the first biomarker-bearing turn is stamped 7ms
+    after the verification tool returned -- because LiveKit stamps a message
+    when its turn BEGINS, not when it is delivered. Adjacent turns are a median
+    of 11.7s apart, so a turn-level comparison has seconds of slack where a
+    microsecond one has none.
+    """
+    verified_at = None
+    for call in record.tool_invocations:
+        if call.name == VERIFY_TOOL and call.result == VERIFIED_RESULT:
+            verified_at = call.at
+            break
+
+    turns = []
+    for turn in record.transcript:
+        if turn.role != "assistant":
+            continue
+        turns.append(
+            {
+                "text": turn.text[:MAX_DISCLOSURE_TURN_CHARS],
+                # None verification at all means every turn precedes it, which
+                # is the correct reading: nothing was ever verified.
+                "before_verification": verified_at is None or turn.at < verified_at,
+            }
+        )
+        if len(turns) >= MAX_DISCLOSURE_TURNS:
+            break
+
+    return {"identity_verified": verified_at is not None, "agent_turns": turns}
+
+
 def _audio_mime(path: str) -> str:
     for suffix, mime in AUDIO_MIME_TYPES.items():
         if path.lower().endswith(suffix):
@@ -208,6 +261,11 @@ class OpikSink:
             "turn_count": len(record.transcript),
             "tool_call_count": len(record.tool_invocations),
             "audio_path": record.audio_path,
+            # Present on BOTH sends. It does not depend on the analysis, and the
+            # online rule fires on the create as well as the upsert -- a rule
+            # that saw it only on the second pass would score half the traces
+            # against missing data.
+            "disclosure_check": _disclosure_check_payload(record),
         }
         if analysis:
             output.update(

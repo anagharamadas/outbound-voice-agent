@@ -132,7 +132,33 @@ def run(record: CallRecord) -> None:
     blob = json.dumps(trace.kw.get("metadata") or {})
     check("trace metadata holds no transcript", "transcript" not in blob,
           "metadata is NOT truncated by Opik; a transcript there risks a 413")
-    check("trace metadata stays small", len(blob) < 2000, f"{len(blob)} chars")
+    # NOT a magic number. What matters is that metadata is bounded BY
+    # CONSTRUCTION, whatever the call looked like -- Opik does not truncate it,
+    # so an unbounded field here is the 413 risk. The disclosure_check block is
+    # capped at MAX_DISCLOSURE_TURNS x MAX_DISCLOSURE_TURN_CHARS, so the worst
+    # case is ~23KB plus a small analysis. 64KB leaves room for both and still
+    # catches an accidental transcript dump, which would run to megabytes.
+    from src.opik_integration import MAX_DISCLOSURE_TURNS, MAX_DISCLOSURE_TURN_CHARS
+    ceiling = MAX_DISCLOSURE_TURNS * MAX_DISCLOSURE_TURN_CHARS * 2 + 16_000
+    check("trace metadata is bounded", len(blob) < ceiling,
+          f"{len(blob)} chars, ceiling {ceiling}")
+
+    # The property, tested against a call built to break it.
+    from copy import deepcopy
+    from src.events import TranscriptTurn
+    from src.opik_integration import _disclosure_check_payload
+    import dataclasses
+    huge = dataclasses.replace(record, transcript=tuple(
+        TranscriptTurn(role="assistant", text="x" * 5000, at=record.started_at)
+        for _ in range(500)))
+    payload = _disclosure_check_payload(huge)
+    check("a 500-turn call with 5000-char turns is still capped",
+          len(payload["agent_turns"]) <= MAX_DISCLOSURE_TURNS
+          and all(len(t["text"]) <= MAX_DISCLOSURE_TURN_CHARS for t in payload["agent_turns"]),
+          f"{len(payload['agent_turns'])} turns kept")
+    check("that pathological call's metadata is still bounded",
+          len(json.dumps(payload)) < ceiling,
+          f"{len(json.dumps(payload))} chars")
 
     print("\n3. Ids are never self-generated (UUIDv7 requirement)")
     check("no id passed to client.trace", trace.kw.get("id") is None)
