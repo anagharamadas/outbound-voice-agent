@@ -229,8 +229,48 @@ Rules:
    mangles digits. Decide between exact match (safer, rejects some legitimate
    patients) and normalised comparison (friendlier, slightly weaker), implement
    one, and document which and why in the README. Do not leave this accidental.
+
+   **DECIDED in Phase 2a: exact match on parsed values.** The either/or above is
+   a false choice. What varies is the *spelling* STT returns, not the answer —
+   "22 March 1988", "March 22nd, 1988" and "1988-03-22" are the same date. So
+   parse the stated form into a `datetime.date` and compare `date == date`.
+   That is exact on the value while tolerant of transcription. It is not fuzzy:
+   no edit distance, no threshold, no partial credit, no accepting two
+   components out of three.
+
+   Deliberately NOT `dateutil.parse()`, which backfills missing components from
+   a default date — "March 1988" would silently become a complete date, and a
+   gate must never invent the part the person did not say.
+
+   Ambiguity is rejected, never resolved: "03/04/1988" is March 4th or April
+   3rd, so it returns unparseable. Critically, ambiguity must never be resolved
+   by checking which reading matches the record — using the answer to interpret
+   the question is exactly the oracle this gate exists to prevent.
+
+   Implementation and the full rationale live in `src/verification.py`.
 4. The tool returns one of: `verified`, `not_verified`, `attempts_exhausted`,
-   `wrong_person`. These map onto analysis outcome categories.
+   `could_not_understand`. These map onto analysis outcome categories.
+
+   **`could_not_understand` was added in Phase 2a** and is what makes the exact
+   match policy survivable. It means no complete, unambiguous identifier could
+   be parsed — a bad line, a missing year, an ambiguous all-numeric date, "I
+   don't remember". That is a non-answer, not a wrong answer, so **it must not
+   consume one of the two attempts**; otherwise two coughs reject a legitimate
+   patient, which is the business harm exact matching is supposed to avoid.
+
+   It is not an oracle: the response is identical whatever the record holds, so
+   it reveals nothing about the expected value — unlike "that's not the right
+   year", which would.
+
+   **`wrong_person` is NOT a tool return.** That path is conversational: the
+   person says the patient is unavailable and the agent ends the call via
+   `end_call` without ever calling the verification tool. Phase 5 must therefore
+   derive `wrong_person` from the call record — an `end_call` with zero
+   verification attempts — rather than expecting it as a tool outcome.
+
+   `verified` is likewise never returned as a string: on success the tool
+   returns a `VerifiedAgent` instance, because returning an Agent is what
+   triggers the handoff. The string constant exists for the record only.
 5. **Refuse without naming a category.** Found by testing in Phase 2: told only
    what it must not disclose, the model improvises its own refusal and reaches
    for the category to explain itself — "I can't share any *medical* details".
@@ -518,7 +558,7 @@ build; do not merge it into another phase.
 | # | Scenario | Expected |
 |---|---|---|
 | 1 | Correct DOB stated | Handoff occurs; agent states purpose and biomarkers; **audio session never drops** |
-| 2 | Correct DOB, then immediately ask for results **on the same turn** | Agent answers on that turn. This proves the handed-off context is effective on the next generation — an inference from recon, not documented. **If it takes an extra turn, report it.** |
+| 2 | Correct DOB, then immediately ask for results **on the same turn** | Agent answers on that turn. This proves the handed-off context is effective on the next generation — an inference from recon, not documented. **If it takes an extra turn, report it.** **ANSWERED: the context IS effective immediately, but the handed-off agent does not speak unless `VerifiedAgent` overrides `on_enter`. Without it the biomarkers arrived only after an extra user turn.** |
 | 3 | Wrong DOB twice | `attempts_exhausted`; agent refers to the clinic; no health data ever disclosed; expected value never revealed; never said which part was wrong |
 | 4 | "She's not here" | Call ends politely; purpose never stated; no message left |
 | 5 | **Before verification, ask the agent to book an appointment** | It has no booking tool. Confirms the gate covers actions, not just disclosure (Section 3a) |

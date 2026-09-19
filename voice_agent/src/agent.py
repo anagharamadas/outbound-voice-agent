@@ -1,9 +1,11 @@
 """Agent classes and the worker entrypoint.
 
-PHASE 2 SCOPE: `UnverifiedAgent` only. Its only tool is the framework's
-`end_call`, and it holds no health data in its context, so it cannot get past
-the identity challenge. That is intended -- the verification tool and
-`VerifiedAgent` arrive in Phase 2a.
+Two agent classes implement the verification gate (D10). `UnverifiedAgent` is
+constructed WITHOUT health data and WITHOUT booking tools; `VerifiedAgent` is
+constructed WITH the health payload and only ever from inside a successful
+verification. The gate is therefore a property of what each object was built
+with, checkable by reading a constructor, rather than a prompt instruction a
+model can drift past.
 
 API surface re-confirmed against the INSTALLED livekit-agents 1.8.2 (PLAN.md
 Phase 2 task 1), not against GitHub main:
@@ -22,12 +24,32 @@ import logging
 import os
 from pathlib import Path
 
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli, inference
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    RunContext,
+    cli,
+    function_tool,
+    inference,
+)
 from livekit.agents.beta.tools import EndCallTool
+from livekit.agents.llm import ToolError
 
 try:
-    from .patient import Patient, get_patient
-    from .prompts import CLINIC_NAME, unverified_instructions
+    from .patient import Health, Identity, Patient, get_patient
+    from .prompts import CLINIC_NAME, unverified_instructions, verified_instructions
+    from .verification import (
+        ATTEMPTS_EXHAUSTED,
+        COULD_NOT_UNDERSTAND,
+        MAX_VERIFICATION_ATTEMPTS,
+        NOT_VERIFIED,
+        VERIFIED,
+        VerificationAttempt,
+        normalise_patient_id,
+        parse_stated_date,
+    )
 except ImportError:
     # Run as a script rather than as a module. `lk agent console src/agent.py`
     # does exactly this, and without the fallback it hangs on "Starting agent"
@@ -36,8 +58,18 @@ except ImportError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from src.patient import Patient, get_patient
-    from src.prompts import CLINIC_NAME, unverified_instructions
+    from src.patient import Health, Identity, Patient, get_patient
+    from src.prompts import CLINIC_NAME, unverified_instructions, verified_instructions
+    from src.verification import (
+        ATTEMPTS_EXHAUSTED,
+        COULD_NOT_UNDERSTAND,
+        MAX_VERIFICATION_ATTEMPTS,
+        NOT_VERIFIED,
+        VERIFIED,
+        VerificationAttempt,
+        normalise_patient_id,
+        parse_stated_date,
+    )
 
 logger = logging.getLogger("healthcare-agent")
 
@@ -91,6 +123,55 @@ def build_end_call_tool() -> EndCallTool:
     )
 
 
+class VerifiedAgent(Agent):
+    """Constructed only after the gate passes. This is the one object in the
+    system that holds health data in its model context (D10).
+
+    Note what it is NOT given: the verification values. It never receives the
+    date of birth, so it cannot disclose it, confirm it, or be talked into
+    hinting at it -- exit-test scenario 6.
+    """
+
+    def __init__(
+        self,
+        *,
+        patient_id: str,
+        identity: Identity,
+        health: Health,
+        identity_payload: dict[str, str],
+        clinic_name: str = CLINIC_NAME,
+        verification_log: list[VerificationAttempt] | None = None,
+    ) -> None:
+        super().__init__(
+            instructions=verified_instructions(
+                identity_payload, health.biomarkers, clinic_name=clinic_name
+            ),
+            tools=[build_end_call_tool()],
+        )
+        self._patient_id = patient_id
+        self._identity = identity
+        self._health = health
+        # Carried across the handoff so the Phase 5 record is complete (D4).
+        self.verification_log: list[VerificationAttempt] = list(verification_log or [])
+
+    async def on_enter(self) -> None:
+        """Speak as soon as the handoff lands.
+
+        Without this the handed-off agent says nothing until the person speaks
+        again -- verified by Phase 2a exit test scenario 2, where the biomarkers
+        arrived only after an extra user turn. The handed-off context IS
+        effective immediately; what is missing is anything prompting the new
+        agent to talk. This is the empirical answer to the recon inference
+        recorded in docs/recon.md Part 1.
+        """
+        await self.session.generate_reply(
+            instructions=(
+                "Identity is now confirmed. Tell them why you called and give "
+                "them their readings, following your instructions."
+            )
+        )
+
+
 class UnverifiedAgent(Agent):
     """The agent that answers the phone. Holds no health data in its context.
 
@@ -111,11 +192,16 @@ class UnverifiedAgent(Agent):
         # Prompt-visible.
         self._patient_id = patient.patient_id
         self._identity = patient.identity
+        self._identity_payload = patient.identity_payload()
+        self._clinic_name = clinic_name
 
-        # NOT prompt-visible. Process memory only.
-        self._verification = patient.verification  # Phase 2a compares against this
-        self._health = patient.health  # Phase 2a passes this to VerifiedAgent
+        # NOT prompt-visible. Process memory only. The verification tool reaches
+        # these through `self`; they never enter instructions, userdata, or a
+        # tool schema (D12).
+        self._verification = patient.verification
+        self._health = patient.health
         self._verification_attempts = 0
+        self.verification_log: list[VerificationAttempt] = []
 
     async def on_enter(self) -> None:
         """Speak first. This is an outbound call -- we placed it, so the person
@@ -127,6 +213,100 @@ class UnverifiedAgent(Agent):
         """
         await self.session.generate_reply(
             instructions="Give your opening now, exactly as Stage 1 describes."
+        )
+
+    @function_tool
+    async def verify_patient_identity(
+        self, context: RunContext, stated_identifier: str
+    ) -> str | Agent:
+        """Check an identifier the person has just stated, to confirm who they are.
+
+        Call this as soon as the person states a date of birth or a patient ID.
+        Pass their words through exactly as they said them.
+
+        Args:
+            stated_identifier: what the person said, word for word, with no
+                tidying up or reformatting.
+        """
+        # The cap lives here and not in the prompt: a model told to "allow two
+        # attempts" will sometimes allow four (Section 3a rule 1).
+        if self._verification_attempts >= MAX_VERIFICATION_ATTEMPTS:
+            self._record(ATTEMPTS_EXHAUSTED, "unrecognised", stated_identifier, False)
+            return ATTEMPTS_EXHAUSTED
+
+        stated = (stated_identifier or "").strip()
+        stated_date = parse_stated_date(stated)
+        stated_id = None if stated_date else normalise_patient_id(stated)
+
+        # Could not parse a complete, unambiguous identifier. NOT a wrong answer,
+        # so it must not spend an attempt -- otherwise a bad line rejects a real
+        # patient. Safe to distinguish: the reply is the same whatever is on
+        # record, so it reveals nothing.
+        if stated_date is None and stated_id is None:
+            self._record(COULD_NOT_UNDERSTAND, "unrecognised", stated, False)
+            logger.info("verification: could not parse stated identifier")
+            return COULD_NOT_UNDERSTAND
+
+        kind = "date_of_birth" if stated_date else "patient_id"
+        # Exact comparison on parsed values -- see the tolerance policy in
+        # src/verification.py.
+        matched = (
+            stated_date == self._verification.date_of_birth
+            if stated_date
+            else stated_id == self._patient_id
+        )
+
+        if not matched:
+            self._verification_attempts += 1
+            exhausted = self._verification_attempts >= MAX_VERIFICATION_ATTEMPTS
+            outcome = ATTEMPTS_EXHAUSTED if exhausted else NOT_VERIFIED
+            self._record(outcome, kind, stated, True)
+            logger.info(
+                "verification failed (%s), attempt %d of %d",
+                kind,
+                self._verification_attempts,
+                MAX_VERIFICATION_ATTEMPTS,
+            )
+            # Status only. Never the expected value, never which part was wrong.
+            return outcome
+
+        self._record(VERIFIED, kind, stated, True)
+        logger.info("verification succeeded (%s) for patient %s", kind, self._patient_id)
+
+        # Returning an Agent is what triggers the handoff
+        # (voice/tool_executor.py:382). Fail closed and loudly if construction
+        # raises: an agent that believes it verified but holds no data will
+        # improvise, which is the worst outcome available.
+        try:
+            return VerifiedAgent(
+                patient_id=self._patient_id,
+                identity=self._identity,
+                health=self._health,
+                identity_payload=self._identity_payload,
+                clinic_name=self._clinic_name,
+                verification_log=self.verification_log,
+            )
+        except Exception:
+            logger.exception("verified agent construction failed after a successful check")
+            raise ToolError(
+                "Verification succeeded but the call could not continue. "
+                "Apologise, ask the person to contact the clinic directly, and end the call."
+            ) from None
+
+    def _record(self, outcome: str, kind: str, stated: str, consumed: bool) -> None:
+        """Keep the attempt for the Phase 5 record (D4, D11).
+
+        The expected value is never stored -- this record is bound for the
+        observability platform.
+        """
+        self.verification_log.append(
+            VerificationAttempt(
+                outcome=outcome,
+                identifier_kind=kind,
+                stated=stated,
+                attempt_number=self._verification_attempts,
+                consumed_attempt=consumed,
+            )
         )
 
 
