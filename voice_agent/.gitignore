@@ -15,3 +15,7 @@ __pycache__/
 
 # Call records: biomarkers + full transcript. Patient health data, never commit.
 call_records/
+
+# Console call audio + session reports. Same sensitivity as call_records/:
+# this is a recording of a patient conversation. Never commit.
+console-recordings/

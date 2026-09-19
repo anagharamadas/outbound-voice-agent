@@ -216,14 +216,32 @@ async def run() -> None:
     if not saved:
         print("  SKIP  no saved record in call_records/ (gitignored; run the console test)")
     else:
-        rec = CallRecord.read_json(saved[-1])
+        # Newest by mtime, not by filename -- call ids are random hex and sort
+        # arbitrarily. And the assertions below are derived FROM the record
+        # rather than hardcoded: any saved call is fair game here, including a
+        # four-turn test call that never booked anything. An earlier version
+        # assumed a happy-path call and broke the moment a short one was made.
+        newest = max(saved, key=lambda p: p.stat().st_mtime)
+        rec = CallRecord.read_json(newest)
+        print(f"        using {newest.name}: {len(rec.transcript)} turns, "
+              f"{len(rec.tool_invocations)} tool call(s)")
         check("round-trips byte-identically",
-              rec.to_dict() == json.loads(saved[-1].read_text(encoding="utf-8")))
+              rec.to_dict() == json.loads(newest.read_text(encoding="utf-8")))
+
         f = compute_facts(rec)
-        check("real call: appointment_booked", f.appointment_booked is True)
-        check("real call: identity_verified", f.identity_verified is True)
-        check("real call: confirmation_id read from tool output",
-              (f.confirmation_id or "").startswith("APT-"), str(f.confirmation_id))
+        expect_booked = any(
+            t.name == "book_appointment" and t.succeeded for t in rec.tool_invocations
+        )
+        expect_verified = any(
+            t.name == "verify_patient_identity" and t.result == VERIFIED
+            for t in rec.tool_invocations
+        )
+        check("appointment_booked matches the tool evidence",
+              f.appointment_booked is expect_booked, f"booked={f.appointment_booked}")
+        check("identity_verified matches the tool evidence",
+              f.identity_verified is expect_verified, f"verified={f.identity_verified}")
+        check("confirmation_id present iff booked",
+              (f.confirmation_id is not None) is expect_booked, str(f.confirmation_id))
         check("real call: duration", (f.call_duration_seconds or 0) > 0,
               f"{f.call_duration_seconds}s")
 
@@ -241,8 +259,14 @@ async def run() -> None:
                 print(f"        evidence   : {live.inferred.medical_advice_evidence!r}")
                 print(f"        summary    : {live.inferred.summary}")
                 print(f"        discrepancies: {list(live.discrepancies) or 'none'}")
-                check("deterministic booking still wins",
-                      live.deterministic.appointment_booked is True)
+                # Derived, not hardcoded -- same reason as section 9. What is
+                # being asserted is that the deterministic value comes from the
+                # TOOL EVIDENCE regardless of what the model narrated, not that
+                # this particular call happened to book.
+                check("deterministic value comes from tool evidence, not the model",
+                      live.deterministic.appointment_booked is expect_booked,
+                      f"booked={live.deterministic.appointment_booked} "
+                      f"(model said {live.inferred.outcome_category.value})")
 
 
 async def run_wiring(tmp: Path) -> None:

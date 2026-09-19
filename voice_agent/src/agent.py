@@ -24,6 +24,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,97 @@ CALL_RECORDS_DIR = PROJECT_ROOT / "call_records"
 # emission, which gains an Opik flush in Phase 6. Hence a hard cap well under
 # the deadline, and an ordering that spends the budget on the record FIRST.
 ANALYSIS_TIMEOUT_SECONDS = 6.0
+
+# Where call audio lands. `lk agent console --record` writes to
+# `console-recordings/` relative to the directory it was launched from; Phase 8
+# will point this at whatever egress produces for a real call. Override with
+# CALL_AUDIO_DIR.
+#
+# CONFIRMED by a real `--record` run on 2026-09-19: `lk` writes
+#   console-recordings/session-<MM-DD-HHMMSS>/audio.ogg
+# alongside a session_report.json. So the format is OGG, not WAV -- which is why
+# this accepts both rather than assuming, and why the search must RECURSE: the
+# audio sits one directory down, and a flat scan finds only the session folder.
+# `audio/vorbis` is a previewable attachment type in Opik, so .ogg is usable in
+# Phase 6 as-is and needs no transcoding.
+AUDIO_EXTENSIONS = (".wav", ".ogg")
+
+# The recording lands at almost exactly the moment the job shuts down. Measured
+# on a real recorded call: audio.ogg was written at 22:40:15 and the shutdown
+# callback ran within that same second. Filesystem timestamps are not finer than
+# a second, so whether the file is closed before or after the lookup is a
+# coin-flip -- hence a short poll rather than a single glance. It is deliberately
+# small: 1.5s plus the 6s analysis cap stays well inside the ~10s deadline.
+AUDIO_WAIT_SECONDS = 1.5
+AUDIO_POLL_SECONDS = 0.25
+
+
+def call_audio_dir() -> Path:
+    configured = (os.getenv("CALL_AUDIO_DIR") or "").strip()
+    return Path(configured) if configured else PROJECT_ROOT / "console-recordings"
+
+
+def find_call_audio(directory: Path, *, not_before: datetime) -> Path | None:
+    """The newest audio file written during this call, if there is one.
+
+    Matched on modification time rather than filename because the recording is
+    written by the console host, not by this process, and its naming is not
+    something this code should assume. `not_before` is the call start, so a
+    recording left over from a previous call is not picked up.
+
+    Returns None routinely and without complaint: a call recorded with no
+    --record flag has no audio, and that is a normal state the record already
+    models (`audio_path` is optional).
+
+    NOTE the ordering hazard -- the console host may not have finished writing
+    when the agent's shutdown callback runs, in which case this correctly finds
+    nothing. That is why a missing file is not treated as an error.
+    """
+    if not directory.is_dir():
+        return None
+    cutoff = not_before.timestamp()
+    # rglob, not iterdir: `lk` nests the audio inside a per-session folder, so a
+    # flat scan sees the folder and no audio at all. This was a real miss on the
+    # first recorded call.
+    candidates = [
+        f
+        for f in directory.rglob("*")
+        if f.is_file()
+        and f.suffix.lower() in AUDIO_EXTENSIONS
+        and f.stat().st_mtime >= cutoff
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda f: f.stat().st_mtime)
+
+
+async def wait_for_call_audio(directory: Path, *, not_before: datetime) -> Path | None:
+    """`find_call_audio`, but give the console host a moment to finish writing.
+
+    Returns as soon as a file appears, so the common cases cost nothing: a call
+    recorded with --record usually resolves on the first or second poll, and a
+    call with no recording at all pays the full 1.5s exactly once, at shutdown,
+    where it is not competing with anything the caller is waiting on.
+    """
+    # No directory means no recording, and waiting will not conjure one: `lk`
+    # creates `console-recordings/session-<start-time>/` when the session STARTS,
+    # so by shutdown it either exists or was never going to. Bailing here is what
+    # keeps an ordinary unrecorded console run from paying 1.5s for nothing.
+    if not directory.is_dir():
+        return None
+
+    deadline = asyncio.get_running_loop().time() + AUDIO_WAIT_SECONDS
+    while True:
+        try:
+            found = find_call_audio(directory, not_before=not_before)
+        except OSError:
+            logger.exception("could not look for call audio; continuing without it")
+            return None
+        if found is not None:
+            return found
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(AUDIO_POLL_SECONDS)
 
 # Set ANALYSIS_ENABLED=false to skip it. Every console run otherwise costs an
 # inference call, which is a poor default when iterating on the call flow.
@@ -528,24 +620,35 @@ async def finish_call(
     agent_holder: Callable[[], Agent],
     reason: str,
 ) -> None:
-    """Build the record, persist it, emit it, then analyse it.
+    """Build the record, persist it, emit it, then enrich it.
 
     The ordering is the design, not an accident, and it follows from the ~10s
-    shutdown deadline:
+    shutdown deadline. Cheap and certain first, slow and optional last:
 
       1. Write the JSON. Costs milliseconds, depends on nothing, and means a
          complete record survives even if everything after this line fails. The
          inspection artifact must not depend on the thing being inspected.
-      2. Emit to the sink. This is the trace; it should not queue behind an LLM
-         call that might time out.
-      3. THEN analyse. It is the only step here that can be slow, so it spends
-         what is left of the budget rather than the start of it, and it is
-         capped so it cannot take the process down with it.
+      2. Emit to the sink. This is the trace; it should not queue behind a
+         filesystem poll or an LLM call that might time out.
+      3. Wait briefly for the recording. The console host writes it as the
+         session tears down -- measured on a real call, within the same second
+         as this callback -- so a single glance loses a coin-flip. Bounded at
+         1.5s and returns the moment it appears.
+      4. Analyse. The only genuinely slow step, so it spends what is left of the
+         budget rather than the start of it, capped so it cannot take the
+         process down with it.
+      5. Rewrite, if steps 3 or 4 produced anything.
 
     Losing the analysis costs a summary and a sentiment label. Losing the record
     costs the call. They are not worth the same, so they are not ordered
     arbitrarily -- which is also why `on_analysis` exists as its own sink method
     rather than the analysis being folded into `on_call_end`.
+
+    NOTE for Phase 6: the audio is therefore NOT known when `on_call_end` fires.
+    An Opik sink has to attach it during `on_analysis`, against the trace it
+    already created -- `AttachmentClient.upload_attachment` takes an
+    `entity_id`, so this is supported, but it is not the shape you would guess
+    from reading `on_call_end` alone.
     """
     recorder.note_end(reason=reason)
     agent = agent_holder()
@@ -568,42 +671,62 @@ async def finish_call(
     # The failure branch is not logged here. GuardedSink has already logged it
     # at ERROR with the detail, and a second line would just be noise.
 
-    if not analysis_enabled():
-        logger.info("post-call analysis skipped (ANALYSIS_ENABLED=false)")
-        return
+    # Only NOW look for the recording. It is written by the console host as the
+    # session tears down, so it is typically not on disk when the record is
+    # built -- and waiting for it before writing the record would put a
+    # filesystem poll in front of the one artifact that must always survive.
+    audio = await wait_for_call_audio(call_audio_dir(), not_before=recorder.started_at)
+    if audio is not None:
+        record = record.with_audio_path(str(audio))
+        logger.info("call audio found: %s", audio)
+    else:
+        logger.debug("no call audio found for this call")
 
-    try:
-        analysis = await asyncio.wait_for(
-            analyse_call(record), timeout=ANALYSIS_TIMEOUT_SECONDS
-        )
-    except asyncio.TimeoutError:
-        # Loud, and then dropped. Overrunning the deadline would have the
-        # supervisor kill the process, which is a worse outcome than no summary.
-        logger.error(
-            "post-call analysis exceeded %.1fs for call %s and was abandoned; "
-            "the call record is already written and emitted",
-            ANALYSIS_TIMEOUT_SECONDS,
-            record.call_id,
-        )
-        return
-    except Exception:
-        logger.exception("post-call analysis failed for call %s", record.call_id)
-        return
+    analysis = None
+    if analysis_enabled():
+        try:
+            analysis = await asyncio.wait_for(
+                analyse_call(record), timeout=ANALYSIS_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            # Loud, and then dropped. Overrunning the deadline would have the
+            # supervisor kill the process, which is a worse outcome than no
+            # summary.
+            logger.error(
+                "post-call analysis exceeded %.1fs for call %s and was abandoned; "
+                "the call record is already written and emitted",
+                ANALYSIS_TIMEOUT_SECONDS,
+                record.call_id,
+            )
+        except Exception:
+            logger.exception("post-call analysis failed for call %s", record.call_id)
+    else:
+        logger.info("post-call analysis skipped (ANALYSIS_ENABLED=false)")
+
+    if audio is None and analysis is None:
+        return  # nothing new to say; the first write already stands
 
     # analyse_call never raises on a model failure -- it returns the
     # deterministic facts with `inference_error` set -- so this is still worth
     # attaching even when the inferred half is missing.
-    analysed = record.with_analysis(analysis.to_dict())
-    write_record(analysed)
-    sink.on_analysis(analysed, analysis.to_dict())
-    logger.info(
-        "call %s analysed: booked=%s verified=%s outcome=%s%s",
-        record.call_id,
-        analysis.deterministic.appointment_booked,
-        analysis.deterministic.identity_verified,
-        analysis.inferred.outcome_category.value if analysis.inferred else "unavailable",
-        f" DISCREPANCIES={list(analysis.discrepancies)}" if analysis.discrepancies else "",
-    )
+    if analysis is not None:
+        record = record.with_analysis(analysis.to_dict())
+    write_record(record)
+
+    if analysis is not None:
+        sink.on_analysis(record, analysis.to_dict())
+        logger.info(
+            "call %s analysed: booked=%s verified=%s outcome=%s%s",
+            record.call_id,
+            analysis.deterministic.appointment_booked,
+            analysis.deterministic.identity_verified,
+            analysis.inferred.outcome_category.value
+            if analysis.inferred
+            else "unavailable",
+            f" DISCREPANCIES={list(analysis.discrepancies)}"
+            if analysis.discrepancies
+            else "",
+        )
 
 
 @server.rtc_session()

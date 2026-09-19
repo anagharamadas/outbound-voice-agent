@@ -109,6 +109,15 @@ class CallRecord:
         """Phase 5's entry point. Returns a new record; does not mutate."""
         return replace(self, analysis=analysis)
 
+    def with_audio_path(self, audio_path: str) -> CallRecord:
+        """Attach the recording once it exists.
+
+        Separate from `CallRecorder.set_audio_path` because the file is written
+        by the console host and is not reliably on disk when the record is
+        built -- see the bounded wait in src/agent.py.
+        """
+        return replace(self, audio_path=audio_path)
+
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe form, for the local inspection file and for Phase 6.
 

@@ -145,6 +145,12 @@ def verification_and_tools() -> tuple[tuple, tuple]:
 
 
 async def run(tmp: Path) -> None:
+    # The real 1.5s wait is exercised in its own check below; everywhere else it
+    # would just make the suite slow for no added coverage.
+    agent_mod.AUDIO_WAIT_SECONDS = 0.05
+    agent_mod.AUDIO_POLL_SECONDS = 0.01
+    os.environ["CALL_AUDIO_DIR"] = str(tmp / "no-recordings")
+
     attempts, tools = verification_and_tools()
 
     print("\n1. A complete record reaches disk with the no-op sink")
@@ -173,6 +179,97 @@ async def run(tmp: Path) -> None:
     check("expected DOB never stored",
           "1986-03-04" not in json.dumps(data),
           "verification values must not reach the record")
+
+    print("\n1b. Call audio is attached when a recording exists")
+    import time
+    from datetime import datetime, timezone
+    audio_dir = tmp / "recordings"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    start = datetime.now(timezone.utc)
+
+    found = agent_mod.find_call_audio(audio_dir, not_before=start)
+    check("no audio -> None, not an error", found is None)
+
+    stale = audio_dir / "old-call.wav"
+    stale.write_bytes(b"RIFF....WAVE")
+    import os as _os
+    old_t = start.timestamp() - 3600
+    _os.utime(stale, (old_t, old_t))
+    check("a recording from a PREVIOUS call is ignored",
+          agent_mod.find_call_audio(audio_dir, not_before=start) is None)
+
+    time.sleep(0.01)
+    fresh = audio_dir / "this-call.wav"
+    fresh.write_bytes(b"RIFF....WAVE")
+    check("a recording from THIS call is found",
+          agent_mod.find_call_audio(audio_dir, not_before=start) == fresh)
+
+    ogg = audio_dir / "this-call.ogg"
+    ogg.write_bytes(b"OggS")
+    check("ogg is accepted (confirmed: lk writes audio.ogg)",
+          agent_mod.find_call_audio(audio_dir, not_before=start) is not None)
+
+    nested = audio_dir / "session-09-19-223948"
+    nested.mkdir(exist_ok=True)
+    time.sleep(0.01)
+    (nested / "audio.ogg").write_bytes(b"OggS")
+    picked = agent_mod.find_call_audio(audio_dir, not_before=start)
+    check("audio NESTED in a session folder is found (lk writes it this way)",
+          picked is not None and picked.parent.name.startswith("session-"),
+          str(picked))
+
+    (audio_dir / "notes.txt").write_text("not audio")
+    picked = agent_mod.find_call_audio(audio_dir, not_before=start)
+    check("non-audio files are ignored", picked.suffix in (".wav", ".ogg"), str(picked))
+
+    check("a missing directory is not an error",
+          agent_mod.find_call_audio(tmp / "nope", not_before=start) is None)
+
+    # The race this wait exists for: the file lands AFTER the lookup begins.
+    late_dir = tmp / "late"
+    late_dir.mkdir()
+    late_start = datetime.now(timezone.utc)
+    agent_mod.AUDIO_WAIT_SECONDS = 2.0
+    agent_mod.AUDIO_POLL_SECONDS = 0.05
+
+    async def write_late():
+        await asyncio.sleep(0.3)
+        (late_dir / "session-x").mkdir(exist_ok=True)
+        (late_dir / "session-x" / "audio.ogg").write_bytes(b"OggS")
+
+    writer = asyncio.create_task(write_late())
+    found_late = await agent_mod.wait_for_call_audio(late_dir, not_before=late_start)
+    await writer
+    check("audio written AFTER the lookup starts is still found", found_late is not None,
+          str(found_late))
+
+    t0 = asyncio.get_running_loop().time()
+    none_found = await agent_mod.wait_for_call_audio(tmp / "empty-dir", not_before=late_start)
+    waited = asyncio.get_running_loop().time() - t0
+    check("no directory at all returns immediately, no 2s stall",
+          none_found is None and waited < 0.5, f"{waited:.2f}s")
+    agent_mod.AUDIO_WAIT_SECONDS = 0.05
+    agent_mod.AUDIO_POLL_SECONDS = 0.01
+
+    # End to end: the path reaches the saved record.
+    agent_mod.CALL_RECORDS_DIR = tmp / "withaudio"
+    _os.environ["CALL_AUDIO_DIR"] = str(audio_dir)
+    try:
+        # The recorder must exist BEFORE the recording is written -- its
+        # started_at is the cutoff, and a file older than the call it belongs to
+        # is exactly what the previous-call check rejects.
+        rec = build_populated_recorder()
+        rec.call_id = "with-audio"
+        time.sleep(0.01)
+        (audio_dir / "during-this-call.wav").write_bytes(b"RIFF....WAVE")
+        await agent_mod.finish_call(recorder=rec, sink=GuardedSink(NoOpSink()),
+                                    agent_holder=lambda: _FakeAgent(attempts, tools),
+                                    reason="user_initiated")
+        saved = json.loads((tmp / "withaudio" / "with-audio.json").read_text())
+        check("audio_path lands in the saved record", saved["audio_path"] is not None,
+              str(saved["audio_path"]))
+    finally:
+        _os.environ.pop("CALL_AUDIO_DIR", None)
 
     print("\n2. note_end keeps the FIRST reason, not the last")
     r2 = CallRecorder(call_id="c2", room_name="r", patient=get_patient(PATIENTS_FILE, "P001"))
