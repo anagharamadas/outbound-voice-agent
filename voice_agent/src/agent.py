@@ -20,6 +20,7 @@ Phase 2 task 1), not against GitHub main:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Callable
@@ -42,6 +43,7 @@ from livekit.agents.llm import ChatMessage, ToolError
 
 try:
     from . import booking
+    from .analysis import analyse_call
     from .events import CallRecorder, ToolInvocation, from_epoch, utcnow
     from .patient import Health, Identity, Patient, get_patient
     from .prompts import CLINIC_NAME, unverified_instructions, verified_instructions
@@ -65,6 +67,7 @@ except ImportError:
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src import booking
+    from src.analysis import analyse_call
     from src.events import CallRecorder, ToolInvocation, from_epoch, utcnow
     from src.patient import Health, Identity, Patient, get_patient
     from src.prompts import CLINIC_NAME, unverified_instructions, verified_instructions
@@ -90,6 +93,26 @@ PATIENTS_FILE = PROJECT_ROOT / "data" / "patients.json"
 # the Phase 4 exit test can show a complete record with observability switched
 # off entirely. Gitignored: these files hold biomarkers and a full transcript.
 CALL_RECORDS_DIR = PROJECT_ROOT / "call_records"
+
+# The post-call analysis is an LLM call, and it runs inside a job shutdown
+# callback. VERIFIED on the installed 1.8.2: `AgentServer` defaults
+# `shutdown_process_timeout` to 10.0s and the supervisor kills the process when
+# callbacks overrun it (`job_proc_lazy_main` gathers them with no timeout of its
+# own -- its source comment notes that a hung callback is exactly how jobs hit
+# that deadline). Measured on a real 15-turn call the analysis took 2.1-4.4s, so
+# it fits, but not with room to spare: the same budget also covers the sink
+# emission, which gains an Opik flush in Phase 6. Hence a hard cap well under
+# the deadline, and an ordering that spends the budget on the record FIRST.
+ANALYSIS_TIMEOUT_SECONDS = 6.0
+
+# Set ANALYSIS_ENABLED=false to skip it. Every console run otherwise costs an
+# inference call, which is a poor default when iterating on the call flow.
+def analysis_enabled() -> bool:
+    return (os.getenv("ANALYSIS_ENABLED") or "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
 # Model IDs are taken from the Literal types in the installed package
 # (livekit.agents.inference.STTModels / LLMModels / TTSModels), not from memory.
@@ -487,19 +510,42 @@ def attach_recorder(session: AgentSession, recorder: CallRecorder) -> None:
         recorder.note_end(reason=str(reason), at=from_epoch(event.created_at))
 
 
-def finish_call(
+def write_record(record) -> None:
+    """The local inspection artifact. Separate so it can be called twice."""
+    try:
+        written = record.write_json(CALL_RECORDS_DIR / f"{record.call_id}.json")
+        logger.info("call record written to %s", written)
+    except OSError:
+        # Not fatal: the sink may still deliver. Loud, because the exit test and
+        # every later debugging session read this file.
+        logger.exception("could not write the local call record")
+
+
+async def finish_call(
     *,
     recorder: CallRecorder,
     sink: ObservabilitySink,
     agent_holder: Callable[[], Agent],
     reason: str,
 ) -> None:
-    """Build the record, write it where a human can read it, hand it to the sink.
+    """Build the record, persist it, emit it, then analyse it.
 
-    Ordering matters. The local JSON file is written FIRST and independently of
-    the sink, so a sink that is broken, misconfigured or absent still leaves a
-    complete record on disk. The inspection artifact must not depend on the
-    thing being inspected.
+    The ordering is the design, not an accident, and it follows from the ~10s
+    shutdown deadline:
+
+      1. Write the JSON. Costs milliseconds, depends on nothing, and means a
+         complete record survives even if everything after this line fails. The
+         inspection artifact must not depend on the thing being inspected.
+      2. Emit to the sink. This is the trace; it should not queue behind an LLM
+         call that might time out.
+      3. THEN analyse. It is the only step here that can be slow, so it spends
+         what is left of the budget rather than the start of it, and it is
+         capped so it cannot take the process down with it.
+
+    Losing the analysis costs a summary and a sentiment label. Losing the record
+    costs the call. They are not worth the same, so they are not ordered
+    arbitrarily -- which is also why `on_analysis` exists as its own sink method
+    rather than the analysis being folded into `on_call_end`.
     """
     recorder.note_end(reason=reason)
     agent = agent_holder()
@@ -508,13 +554,7 @@ def finish_call(
         tool_invocations=tuple(getattr(agent, "tool_log", ())),
     )
 
-    try:
-        written = record.write_json(CALL_RECORDS_DIR / f"{record.call_id}.json")
-        logger.info("call record written to %s", written)
-    except OSError:
-        # Not fatal: the sink may still deliver. Loud, because the exit test and
-        # every later debugging session read this file.
-        logger.exception("could not write the local call record")
+    write_record(record)
 
     result = sink.on_call_end(record)
     if result.delivered:
@@ -527,6 +567,43 @@ def finish_call(
         )
     # The failure branch is not logged here. GuardedSink has already logged it
     # at ERROR with the detail, and a second line would just be noise.
+
+    if not analysis_enabled():
+        logger.info("post-call analysis skipped (ANALYSIS_ENABLED=false)")
+        return
+
+    try:
+        analysis = await asyncio.wait_for(
+            analyse_call(record), timeout=ANALYSIS_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        # Loud, and then dropped. Overrunning the deadline would have the
+        # supervisor kill the process, which is a worse outcome than no summary.
+        logger.error(
+            "post-call analysis exceeded %.1fs for call %s and was abandoned; "
+            "the call record is already written and emitted",
+            ANALYSIS_TIMEOUT_SECONDS,
+            record.call_id,
+        )
+        return
+    except Exception:
+        logger.exception("post-call analysis failed for call %s", record.call_id)
+        return
+
+    # analyse_call never raises on a model failure -- it returns the
+    # deterministic facts with `inference_error` set -- so this is still worth
+    # attaching even when the inferred half is missing.
+    analysed = record.with_analysis(analysis.to_dict())
+    write_record(analysed)
+    sink.on_analysis(analysed, analysis.to_dict())
+    logger.info(
+        "call %s analysed: booked=%s verified=%s outcome=%s%s",
+        record.call_id,
+        analysis.deterministic.appointment_booked,
+        analysis.deterministic.identity_verified,
+        analysis.inferred.outcome_category.value if analysis.inferred else "unavailable",
+        f" DISCREPANCIES={list(analysis.discrepancies)}" if analysis.discrepancies else "",
+    )
 
 
 @server.rtc_session()
@@ -571,7 +648,7 @@ async def entrypoint(ctx: JobContext) -> None:
         if finalised:
             return
         finalised = True
-        finish_call(
+        await finish_call(
             recorder=recorder, sink=sink, agent_holder=current_agent, reason=reason
         )
 

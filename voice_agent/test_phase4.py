@@ -33,6 +33,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # value keeps this test hermetic: it needs no .env, reads no real secret, and
 # never dials anything. The number is not used for anything here.
 os.environ.setdefault("DESTINATION_PHONE_NUMBER", "+10000000000")
+# Phase 4 is about the record and the seam, not the analysis. Switching it off
+# keeps this suite free of inference calls; Phase 5's suite covers the analysis.
+os.environ.setdefault("ANALYSIS_ENABLED", "false")
 # Section 7 constructs the real AgentSession, which validates that credentials
 # are PRESENT before it will build. These are placeholders: nothing connects,
 # nothing authenticates, and AgentSession.start is replaced with a no-op.
@@ -141,16 +144,16 @@ def verification_and_tools() -> tuple[tuple, tuple]:
     return attempts, tools
 
 
-def run(tmp: Path) -> None:
+async def run(tmp: Path) -> None:
     attempts, tools = verification_and_tools()
 
     print("\n1. A complete record reaches disk with the no-op sink")
     agent_mod.CALL_RECORDS_DIR = tmp
     rec = build_populated_recorder()
     sink = GuardedSink(NoOpSink())
-    agent_mod.finish_call(recorder=rec, sink=sink,
-                          agent_holder=lambda: _FakeAgent(attempts, tools),
-                          reason="user_initiated")
+    await agent_mod.finish_call(recorder=rec, sink=sink,
+                                agent_holder=lambda: _FakeAgent(attempts, tools),
+                                reason="user_initiated")
 
     path = tmp / "test-call-0001.json"
     check("JSON file written", path.exists(), str(path))
@@ -199,9 +202,9 @@ def run(tmp: Path) -> None:
     rec = build_populated_recorder()
     rec2_id = "test-call-0002"
     rec.call_id = rec2_id
-    agent_mod.finish_call(recorder=rec, sink=GuardedSink(RaisingSink()),
-                          agent_holder=lambda: _FakeAgent(attempts, tools),
-                          reason="participant_disconnected")
+    await agent_mod.finish_call(recorder=rec, sink=GuardedSink(RaisingSink()),
+                                agent_holder=lambda: _FakeAgent(attempts, tools),
+                                reason="participant_disconnected")
     check("inspection artifact survives a broken sink",
           (tmp / "broken" / f"{rec2_id}.json").exists())
 
@@ -288,7 +291,7 @@ if __name__ == "__main__":
     )
     print(__doc__.strip().split("\n")[0])
     with tempfile.TemporaryDirectory() as td:
-        run(Path(td))
+        asyncio.run(run(Path(td)))
         print("\n7. The real entrypoint's wiring, with no room and no models")
         asyncio.run(run_entrypoint_wiring(Path(td) / "entrypoint"))
     print()

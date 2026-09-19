@@ -150,6 +150,64 @@ class CallRecord:
             "analysis": self.analysis,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CallRecord:
+        """Rebuild a record from `to_dict` output. The inverse of it.
+
+        Phase 5 needs this: its exit test analyses a record saved by Phase 4,
+        and re-running a call to get one back would make the analysis untestable
+        without a phone. Round-tripping through the JSON also keeps the two
+        halves honest -- a field added to one and forgotten in the other shows
+        up immediately.
+        """
+
+        def dt(value: str | None) -> datetime | None:
+            return datetime.fromisoformat(value) if value else None
+
+        started = dt(data["started_at"])
+        assert started is not None, "started_at is required"
+
+        return cls(
+            call_id=data["call_id"],
+            room_name=data["room_name"],
+            patient_id=data["patient_id"],
+            patient_name=data["patient_name"],
+            biomarkers=tuple(Biomarker(**b) for b in data.get("biomarkers", ())),
+            started_at=started,
+            ended_at=dt(data.get("ended_at")),
+            duration_seconds=data.get("duration_seconds"),
+            end_reason=data.get("end_reason"),
+            transcript=tuple(
+                TranscriptTurn(
+                    role=t["role"],
+                    text=t["text"],
+                    at=datetime.fromisoformat(t["at"]),
+                    interrupted=t.get("interrupted", False),
+                )
+                for t in data.get("transcript", ())
+            ),
+            tool_invocations=tuple(
+                ToolInvocation(
+                    name=t["name"],
+                    arguments=t.get("arguments", {}),
+                    result=t["result"],
+                    at=datetime.fromisoformat(t["at"]),
+                    succeeded=t["succeeded"],
+                )
+                for t in data.get("tool_invocations", ())
+            ),
+            verification_attempts=tuple(
+                VerificationAttempt(**v) for v in data.get("verification_attempts", ())
+            ),
+            audio_path=data.get("audio_path"),
+            analysis=data.get("analysis"),
+        )
+
+    @classmethod
+    def read_json(cls, path: Path) -> CallRecord:
+        """Load a record written by `write_json`."""
+        return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
     def write_json(self, path: Path) -> Path:
         """Write the record where a human can read it.
 
