@@ -94,10 +94,11 @@ The implementing agent should follow these, not relitigate them.
 | D11 | Verification is a **tool** (`verify_patient_identity`) **bound to the agent class**, not a module-level function | `RunContext` does not expose the chat context; tools reach agent state through `self`. Also yields a deterministic `identity_verified` event for analysis (D4), an auditable span in the Opik trace, and a sharp signal for the online eval. |
 | D12 | Health data passes ONLY through the verified agent's constructor. Never in `userdata`, never in tool names, descriptions, parameter names or enum values | Whether `userdata` is serialised into the prompt could not be verified; tool schemas demonstrably are sent to the model. Sidestep both rather than reason about them. |
 | D4 | `appointment_booked` is determined by **tool-call evidence**, not by LLM reading of the transcript | Ground truth from system events beats inference from text. The LLM classifies softer things only. |
-| D5 | Observability is behind a seam with a no-op default; Opik is one implementation | The brief demands a pluggable module. Deleting the Opik file must leave a working agent. |
+| D5 | Observability is behind a seam with a no-op default; Opik is one implementation | The brief demands a pluggable module. Deleting the Opik file must leave a working agent. **Confirmed viable by the Opik recon, not merely assumed:** `Opik.trace()` and `Opik.span()` both accept `start_time` and `end_time` (and `span()` takes `trace_id` / `parent_span_id`), so a whole trace can be assembled in memory during the call and emitted in one burst at the end carrying real historical timestamps. Live instrumentation is **not** required. The sink can therefore be a pure function of a finished `CallRecord`. Do not wire `opik_integration.py` into the call path on the assumption that Opik needs live hooks — that would destroy exactly the modularity the brief grades. |
 | D6 | "Online evaluation" is implemented as an Opik platform rule that scores traces automatically as they arrive | This is the platform-native reading of the requirement. The README explains the online vs offline distinction. |
 | D7 | The mock booking tool can fail and can return no availability | A tool that always succeeds proves nothing and gives the eval nothing to measure. |
 | D8 | Agent is stateless per call; the dispatcher is single-shot and synchronous | Simplest thing that satisfies the brief. Scaling is a documented gap, not a built feature. |
+| D13 | **Score deterministically wherever the property is decidable from the trace. Use LLM-as-a-judge only where the question is genuinely subjective.** | Whether a biomarker was disclosed before verification is *decidable*: the transcript and the verification span are both in the trace, both carry timestamps, and the answer is a comparison. Handing that to a judge injects position bias, leniency drift and self-inconsistency into a safety-critical check that has an exact answer — and a judge that is 95% reliable is a poor way to test a property that is either true or false. Judges are reserved for questions with no computable ground truth, such as whether an explanation was clear and appropriately non-alarming. This governs Phase 7: reach for code first, and justify any judge by the absence of a computable answer. |
 
 ---
 
@@ -281,6 +282,43 @@ Rules:
    appointment, doctor). A prohibition alone is not enough; the model needs
    something safe to say instead.
 
+   **The barred-word list applies to `UnverifiedAgent` ONLY.** `VerifiedAgent`
+   must say "appointment" and "doctor" constantly — offering an appointment with
+   a doctor is its entire job. If this list ever migrates into shared prompt
+   text, the verified agent cannot complete the call at all, and the failure
+   will look like a model problem rather than a prompt-scoping one. Keep the
+   list inside the unverified prompt builder and nowhere else.
+   *(Verified correct in `src/prompts.py` as of Phase 3: the list appears only
+   inside `unverified_instructions`, and `verified_instructions` uses
+   "appointment" 11 times and "doctor" 4 times freely.)*
+6. **Bound `could_not_understand` separately from the attempt cap.** Rule 4
+   deliberately stops a non-answer consuming one of the two attempts, which is
+   right — but it leaves non-answers unbounded. Someone repeating "I don't
+   remember", or a line so poor nothing ever parses, would loop forever: the
+   two-attempt cap only counts *wrong* answers, so it never trips. On a real
+   PSTN call that burns billed minutes and never reaches an exit.
+
+   **Cap: 3 consecutive `could_not_understand` results.** On the third, stop
+   asking and take exit 3 — the same "I'm sorry, I'm not able to continue over
+   the phone. Please contact the clinic directly" line, then `end_call`. Three
+   is enough to ride out a bad line or a misheard year without becoming a
+   loop.
+
+   Like the attempt cap, this lives in code, not the prompt. Count consecutive
+   unparsed answers and reset the counter whenever one parses — a caller who
+   fumbles once, answers cleanly, then fumbles again is not stuck and should not
+   be treated as though they are.
+7. **The patient-ID path compares exactly, after normalisation.** Rule 3 covers
+   dates only. For the ID alternative: normalise case and whitespace (and the
+   spoken-digit forms a person actually uses — "P zero zero one"), then require
+   an exact string match. No fuzzy matching, no edit distance, no partial
+   credit, no prefix matching.
+
+   Stated explicitly because leaving it implicit invites the implementation to
+   invent something — and an ID path that is quietly more permissive than the
+   date path is both a weaker gate and a behaviour that cannot be explained in
+   review. Both identifiers must be equally hard to guess.
+
 ### Tool contract sketch
 
 `verify_patient_identity` is a **method on `UnverifiedAgent`**, decorated as a
@@ -411,6 +449,31 @@ or the explicit statement "could not verify".
 
 **Exit test:** a written recon report. Flag anything in Section 3 or Section 5
 that the docs contradict.
+
+### Provenance of the Opik findings in this plan
+
+The Opik facts folded into D5, Phase 4 task 5, Phase 6 and Phase 7 came from the
+Opik recon and were dictated into this plan by the human who ran it. At the time
+of that edit, **`docs/recon-opik.md` contained only its header and known-gaps
+list — its body was still the placeholder `<paste the research output here>`**,
+so the claims could not be cross-checked against the report in-repo.
+
+They are recorded here because the research was done; they are flagged here
+because a future session reading this plan would otherwise treat them as
+verified-in-repo and skip re-checking under hard rule 1.
+
+**Before starting Phase 6 or Phase 7: paste the recon body into
+`docs/recon-opik.md`, and re-confirm any API name you are about to type against
+it or against the live docs.** The specific claims to re-check are: `start_time`
+/ `end_time` on `trace()` and `span()`; `flush()` return semantics; the UUIDv7
+id requirement; `metadata` not being truncated; `OPIK_URL_OVERRIDE` rather than
+`OPIK_BASE_URL`; `Opik.end(timeout, flush=True)`; and, for Phase 7, the judge
+tool names and the `sampling_rate` / `trigger_scope` / `max_cost_usd` fields.
+
+The recon's own known gaps remain open and are load-bearing: whether
+`user_defined_metric_python` is creatable in the Cloud UI decides the Phase 7
+approach, which is why Phase 7 opens with a timeboxed feasibility check rather
+than an implementation task.
 
 **STOP.**
 
@@ -616,6 +679,15 @@ This is the phase the "modular Opik" requirement is really graded on.
      like: `on_call_start(record)`, `on_call_end(record)`, `on_analysis(record,
      analysis)`. Keep it to three or four methods — a wide interface defeats the
      purpose.
+   - **`on_call_end` must be able to REPORT whether emission succeeded. Do not
+     let it return `None`.** Return a small result — a bool, or a result object
+     carrying a reason — so the caller can tell delivered from dropped.
+
+     This is a Phase 4 decision even though Opik does not arrive until Phase 6,
+     because the interface is fixed here and a contract with no success channel
+     cannot carry a flush result later. Retrofitting a return type across an
+     already-wired seam is exactly the rework this plan is meant to avoid.
+     `NoOpSink` returns success.
    - A `NoOpSink` default implementation that does nothing.
    - A single factory/selection point that returns the configured sink.
 3. Wire the agent to emit to whatever sink is configured. **The agent code must
@@ -627,9 +699,31 @@ This is the phase the "modular Opik" requirement is really graded on.
    before exit. Identify the correct lifecycle hook from the Phase 0 recon. This
    is a likely source of silent data loss — test it explicitly.
 
+   **Why this is the highest-severity silent failure in the build.** Per the
+   Opik recon: Opik logs from a **background thread**, and `flush()` returns
+   `True` only if every message was delivered with no data loss, `False` on
+   timeout or dropped messages. The docs name short-lived scripts as the case
+   that requires an explicit flush — which is precisely this agent process,
+   which exits as soon as the call ends.
+
+   **The sink must check the return value of `flush()`. Fire-and-forget is not
+   acceptable here.** A dropped flush produces no exception and no log line: the
+   call sounds perfect, the process exits cleanly, and the Opik project is
+   simply empty. There is nothing to debug afterwards because nothing recorded
+   that anything was lost.
+
+   Rule 4 above still holds — a sink failure must never propagate into the call
+   path. Log loudly, then swallow. "Loudly" and "swallowed" are not in tension:
+   the call continues, and the operator still learns the trace was lost.
+
 **Exit test:** run a local call with the no-op sink. A complete `CallRecord`
 with transcript and tool invocations is written to a local JSON file for
 inspection. Deleting or disabling the sink changes nothing about the call.
+
+**Also confirm the failure path is observable.** Force an emission failure and
+check that it is logged loudly and visibly — a `False` flush result must never
+be swallowed silently. A seam that cannot report its own failure is worse than
+no seam, because it looks like it is working.
 
 **STOP.**
 
@@ -686,14 +780,42 @@ and `discrepancy` is set.
    - **Call metadata and variables** — patient id, name, phone (see note),
      biomarkers passed in, room name, call id, duration, end reason
    - **Conversation / transcript** — turn by turn
-   - **Call recording or audio reference** — attach the audio if the SDK
-     supports it; otherwise attach the URI/path. The brief permits either.
+   - **Call recording** — **attach the real `.wav`.** `audio/wav` is a supported
+     preview type and `Attachment(data=<path>, content_type="audio/wav")` works
+     on the explicit client. The earlier "or fall back to a URI reference" hedge
+     is withdrawn: the brief permits a reference, but a playable attachment in
+     the trace is a materially better artifact and it is verified as available.
+     Keep the URI only as a genuine last resort — if the recording itself fails.
    - **Tool calls and results** — as child spans, with arguments and results
    - **Post-call analysis** — the full structured result, plus the deterministic
      fields as tags or metadata so they are filterable in the UI
 3. Trace structure: one trace per call, named identifiably. Child spans for the
    conversation and for each tool invocation. Attach the analysis to the trace.
-4. **Flush before exit** if the SDK requires it (Phase 0 recon item).
+
+   **Do NOT self-generate trace or span ids.** Self-generated ids must be
+   **UUIDv7**, and an ordinary `uuid4()` will fail ingestion validation with an
+   id error. Use `client.trace(...)` and then the returned object's `.span(...)`
+   so the SDK owns id generation entirely. This is a cheap mistake to make and
+   an annoying one to diagnose, because it surfaces at ingestion rather than at
+   the call site.
+
+   **Keep the transcript OUT of `metadata`.** Inline `input`/`output` is
+   truncated around 20MB, but **`metadata` is not truncated** and counts toward
+   the per-request limit — a long transcript there risks a 413 on the request.
+   The transcript belongs in span `input`/`output`, where truncation protects
+   you. `metadata` is for small, filterable fields.
+4. **Flush before exit, and check the result.** `flush()` returns `True` only if
+   everything was delivered; `False` means timeout or dropped messages. See
+   Phase 4 task 5 — the sink contract exists to carry this signal. Also note
+   `Opik.end(timeout, flush=True)` exists, and **the client must not be used
+   after it**.
+
+   Env vars, per the recon: **`OPIK_API_KEY`** (required on Cloud),
+   **`OPIK_WORKSPACE`**, **`OPIK_PROJECT_NAME`**, and **`OPIK_URL_OVERRIDE`**.
+   Use `OPIK_URL_OVERRIDE`, **not** `OPIK_BASE_URL` — the Opik docs are
+   inconsistent between the two and only `OPIK_URL_OVERRIDE` appears in the env
+   var reference. A silently ignored base-url variable is an hour lost to
+   traces arriving nowhere with no error.
 5. **Enabling it must be one line plus an env var.** Demonstrate this in the
    README: with `OPIK_ENABLED=false` the app runs identically with the no-op
    sink; deleting `opik_integration.py` must not break the agent.
@@ -714,32 +836,78 @@ metadata, transcript, tool spans, audio reference, and the analysis. Then set
 
 **Goal:** at least one evaluation that scores traces automatically.
 
-**Tasks**
+**The metric is premature disclosure:** did any biomarker name or value appear
+in agent speech **before** a successful verification event? It is the sharpest
+possible test of D10, a failure is a genuine privacy incident rather than a
+style complaint, and — decisively — it is *decidable* from the trace, which
+makes it the worked example of D13.
 
-1. Per the Phase 0 recon, configure an online evaluation rule in Opik that runs
-   over incoming traces from this project.
-2. Implement **one** evaluation well rather than three shallowly. Candidates,
-   best first:
-   - **Premature disclosure (recommended).** Did any biomarker name, value or
-     health statement appear in agent speech **before** a successful
-     `verify_patient_identity` call? This is near-deterministic — the trace
-     contains both the transcript and the verification span with timestamps —
-     so it needs little or no LLM judgement, it is the sharpest possible test of
-     D10, and a failure is a genuine privacy incident rather than a style
-     complaint. Strongest choice for a healthcare use case.
-   - **Safety / scope adherence**: did the agent avoid giving medical advice,
-     diagnosing, or speculating beyond the precomputed status? This is the most
-     defensible choice for a healthcare use case and connects directly to D2.
-   - **Task completion**: did the agent verify identity, communicate the
-     biomarker, and attempt a booking? A checklist-style judge.
-   - **Communication quality**: was the explanation clear and appropriately
-     non-alarming for a patient?
-3. If it is an LLM-as-judge, write the judge prompt with an explicit rubric and
-   a bounded output (a score from a fixed set plus a short reason). Vague
-   judges produce unusable scores.
-4. Document in the README: what is measured, why that criterion was chosen for
-   a healthcare context, the judge's known weaknesses (self-consistency,
-   position bias, leniency), and what an offline eval suite would add.
+**Tasks, in order.**
+
+**STEP 1 — Feasibility check. 20 minutes, hard stop.**
+Confirm whether `user_defined_metric_python` — a Python code metric, not an LLM
+judge — is actually creatable in the Opik Cloud UI for this account. The REST
+schema lists the type, but the recon **could not find** a free-tier feature
+matrix or any docs page describing how to author one, and it explicitly flags
+this as the unknown that decides the approach. Do not spend longer than 20
+minutes proving it either way. If it is not available, go to **Step 3**.
+
+**STEP 2 — IF AVAILABLE: implement it as a Python code metric.**
+Did a biomarker name or value appear in agent speech before a successful
+verification event? Exact, free to run, no judge variance, no model dependency.
+This is D13 in practice and the answer to "why not an LLM judge here?" is simply
+that the question has a computable answer.
+
+**STEP 3 — FALLBACK: Agent as a Judge. Fully documented, not apologised for.**
+Put `{{trace}}` in the prompt. **No variable mapping is needed** — the docs
+state there is nothing to map, that the same rule works whatever shape the trace
+has, and they recommend this mode as the default starting point.
+
+Judge tools available:
+  - `read`
+  - `jq`
+  - `search` — finds text anywhere in the trace
+  - `get_trace_spans` — **plural**; lists spans. There is no
+    `get_trace_span` singular, and assuming one will waste a cycle.
+  - `get_attachment` — fetches an attachment as image, audio or text
+
+Write the rubric explicitly with a bounded output: a score from a fixed set plus
+a short reason. Vague judges produce unusable scores.
+
+**STEP 4 — Rule configuration. All verified against the REST schema.**
+  - **`sampling_rate` is 0–1**, even though the UI displays a percentage. Set it
+    to score every trace. Entering `100` where `1` is expected is an easy and
+    invisible mistake.
+  - **`trigger_scope` defaults to `"production"`, which is correct** — traces
+    logged through the SDK are production traces. Do not change it.
+  - **Set `max_cost_usd`.** On reaching the cap the judge wraps up and returns
+    what it has. This is insurance against an agentic judge looping on a long
+    trace, which is a real risk when the judge can call tools.
+  - **Agent as a Judge needs a tool-calling model.** Without one it degrades to
+    a single call over a truncated trace, which silently defeats the point.
+    Choose the model deliberately.
+  - The judge model is configured under **Workspace Settings → AI Providers**
+    and can be any of OpenAI, Anthropic, Gemini, Bedrock, Ollama, or an
+    OpenAI-compatible endpoint. **Pick a different model family from the
+    conversational agent** (currently `openai/gpt-4.1-mini`), so the judge is
+    not grading its own family's output — self-preference bias is well
+    documented and free to avoid here.
+  - **Do NOT use thread-scope rules.** Thread rules wait for a cooldown after
+    last activity, defaulting to **15 minutes**, which would stall the demo
+    completely. There is one call per patient, so trace scope is the right unit
+    anyway.
+
+**STEP 5 — Demo insurance.**
+Rules only run on traces logged **after** the rule is created. But existing
+traces can be selected in the UI and scored retroactively via the **brain
+icon**. A call made before the rule existed therefore does not need re-dialling
+— worth knowing before anyone re-runs a live call to India for no reason.
+
+**STEP 6 — README.**
+Explain what is measured, why that criterion for a healthcare use case, and why
+it is scored deterministically rather than judged (D13). If Step 3 was taken
+instead, say so plainly and give the judge's known weaknesses — self-consistency,
+position bias, leniency — along with what an offline eval suite would add.
 
 **Exit test:** a completed call produces a trace that is automatically scored,
 and the score is visible in the Opik UI.
