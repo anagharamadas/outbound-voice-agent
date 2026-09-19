@@ -453,27 +453,31 @@ that the docs contradict.
 ### Provenance of the Opik findings in this plan
 
 The Opik facts folded into D5, Phase 4 task 5, Phase 6 and Phase 7 came from the
-Opik recon and were dictated into this plan by the human who ran it. At the time
-of that edit, **`docs/recon-opik.md` contained only its header and known-gaps
-list — its body was still the placeholder `<paste the research output here>`**,
-so the claims could not be cross-checked against the report in-repo.
+Opik recon and were dictated into this plan by the human who ran it **before the
+report body existed in-repo** — at the time of that edit `docs/recon-opik.md`
+held only its header and known-gaps list. The plan therefore ran ahead of its
+own source for a while.
 
-They are recorded here because the research was done; they are flagged here
-because a future session reading this plan would otherwise treat them as
-verified-in-repo and skip re-checking under hard rule 1.
-
-**Before starting Phase 6 or Phase 7: paste the recon body into
-`docs/recon-opik.md`, and re-confirm any API name you are about to type against
-it or against the live docs.** The specific claims to re-check are: `start_time`
-/ `end_time` on `trace()` and `span()`; `flush()` return semantics; the UUIDv7
-id requirement; `metadata` not being truncated; `OPIK_URL_OVERRIDE` rather than
+That gap is now closed. The full report was written to `docs/recon-opik.md` in
+commit `a0bf502`, and every claim this plan leans on has since been
+cross-checked against it: `start_time` / `end_time` on `trace()` and `span()`;
+`flush()` returning `True` only on complete delivery; the UUIDv7 id
+requirement; `metadata` not being truncated; `OPIK_URL_OVERRIDE` rather than
 `OPIK_BASE_URL`; `Opik.end(timeout, flush=True)`; and, for Phase 7, the judge
 tool names and the `sampling_rate` / `trigger_scope` / `max_cost_usd` fields.
+All of them are present in the report and stated here consistently with it.
+
+This section stays because provenance is worth recording, not because there is
+outstanding work in it. **The standing instruction under hard rule 1 is
+unchanged: re-confirm any API name against `docs/recon-opik.md` or the live docs
+before you type it.** A cross-check done once by a previous session is not a
+substitute for looking, and the report itself carries a date — the docs move.
 
 The recon's own known gaps remain open and are load-bearing: whether
 `user_defined_metric_python` is creatable in the Cloud UI decides the Phase 7
 approach, which is why Phase 7 opens with a timeboxed feasibility check rather
-than an implementation task.
+than an implementation task. The report's gaps table is the authoritative list
+of what is still unanswered.
 
 **STOP.**
 
