@@ -1,8 +1,9 @@
 """Agent classes and the worker entrypoint.
 
-PHASE 2 SCOPE: `UnverifiedAgent` only. It has no tools and no health data, so
-it cannot get past the identity challenge. That is intended -- the verification
-tool and `VerifiedAgent` arrive in Phase 2a.
+PHASE 2 SCOPE: `UnverifiedAgent` only. Its only tool is the framework's
+`end_call`, and it holds no health data in its context, so it cannot get past
+the identity challenge. That is intended -- the verification tool and
+`VerifiedAgent` arrive in Phase 2a.
 
 API surface re-confirmed against the INSTALLED livekit-agents 1.8.2 (PLAN.md
 Phase 2 task 1), not against GitHub main:
@@ -22,6 +23,7 @@ import os
 from pathlib import Path
 
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli, inference
+from livekit.agents.beta.tools import EndCallTool
 
 try:
     from .patient import Patient, get_patient
@@ -56,6 +58,39 @@ TTS_MODEL = "inworld/inworld-tts-2"
 TTS_VOICE = "Ashley"
 
 
+def build_end_call_tool() -> EndCallTool:
+    """The framework's own hang-up tool.
+
+    This resolves the Phase 0 open question: ending a call is NOT an implicit
+    framework capability, it is a tool the model must call, so it is a fourth
+    tool and PLAN.md needs updating (Phase 0 recon item 1, last bullet).
+
+    `livekit.agents.beta.tools` is a beta namespace and may move.
+
+    Both strings below are sent to the model, so neither may hint at why the
+    call was placed (D12). `end_instructions` is the tool's output, which the
+    model uses to word its closing line -- left contentless deliberately, since
+    the exit-2 case must end the call without ever stating a purpose.
+    """
+    return EndCallTool(
+        extra_description=(
+            "Also call this after you have delivered a closing line because the "
+            "person on the line is not the person you asked for, because you were "
+            "unable to confirm who you are speaking with, or because they asked "
+            "you to stop or to call back later."
+        ),
+        end_instructions=(
+            "Close warmly in one short sentence. Do not state or hint at why the "
+            "call was made, and do not leave a message."
+        ),
+        # The opening is generated in on_enter; without this the model can hang
+        # up while greeting.
+        ignore_on_enter=True,
+        # Disconnects SIP callers too, which is what we want from Phase 8 on.
+        delete_room=True,
+    )
+
+
 class UnverifiedAgent(Agent):
     """The agent that answers the phone. Holds no health data in its context.
 
@@ -70,7 +105,8 @@ class UnverifiedAgent(Agent):
         super().__init__(
             instructions=unverified_instructions(
                 patient.identity_payload(), clinic_name=clinic_name
-            )
+            ),
+            tools=[build_end_call_tool()],
         )
         # Prompt-visible.
         self._patient_id = patient.patient_id
@@ -80,6 +116,18 @@ class UnverifiedAgent(Agent):
         self._verification = patient.verification  # Phase 2a compares against this
         self._health = patient.health  # Phase 2a passes this to VerifiedAgent
         self._verification_attempts = 0
+
+    async def on_enter(self) -> None:
+        """Speak first. This is an outbound call -- we placed it, so the person
+        who picks up says nothing until we do (Section 3a, Stage 1).
+
+        The instruction here is deliberately contentless: the opening script
+        lives in the system prompt, and repeating any of it here would be a
+        second place where a purpose disclosure could creep in.
+        """
+        await self.session.generate_reply(
+            instructions="Give your opening now, exactly as Stage 1 describes."
+        )
 
 
 def build_session() -> AgentSession:

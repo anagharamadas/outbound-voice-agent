@@ -138,9 +138,17 @@ Phase 0 recon:
 |---|---|---|
 | Constructed with | `patient_id`, `name` only | identity + `biomarkers[]` |
 | Instructions mention | greeting, challenge, exits | purpose, biomarkers, booking |
-| Tools | `verify_patient_identity` **only** | `get_available_slots`, `book_appointment` |
+| Tools | `verify_patient_identity` and `end_call` **only** | `get_available_slots`, `book_appointment`, `end_call` |
 | Can disclose health data | No — never held it | Yes |
 | Can book an appointment | **No — no such tool** | Yes |
+
+`end_call` is the framework's own `EndCallTool`
+(`livekit.agents.beta.tools`), resolved during Phase 2 — see Phase 0 item 1.
+It is present on both agents because either may need to hang up, and it is
+harmless to the gate: it discloses nothing and carries no patient data in its
+schema. Its `end_instructions` must stay contentless, since the model words its
+closing line from that string and the wrong-person exit must end the call
+without ever stating a purpose.
 
 The verifying values (`date_of_birth`, `patient_id` when used as the identifier)
 are held by the **tool**, in process memory. They must not be placed in the
@@ -223,6 +231,15 @@ Rules:
    one, and document which and why in the README. Do not leave this accidental.
 4. The tool returns one of: `verified`, `not_verified`, `attempts_exhausted`,
    `wrong_person`. These map onto analysis outcome categories.
+5. **Refuse without naming a category.** Found by testing in Phase 2: told only
+   what it must not disclose, the model improvises its own refusal and reaches
+   for the category to explain itself — "I can't share any *medical* details".
+   That sentence tells an unverified person this is a medical call, which is the
+   disclosure the gate exists to prevent. The prompt must therefore supply a
+   scripted, contentless refusal line and an explicit list of words barred from
+   a refusal (medical, health, clinical, results, tests, records, treatment,
+   appointment, doctor). A prohibition alone is not enough; the model needs
+   something safe to say instead.
 
 ### Tool contract sketch
 
@@ -326,9 +343,15 @@ Read current official docs and report findings. Do not write code.
    - **How to mutate the chat context mid-session from inside a tool** — D10
      and Phase 2a depend on this. If it is not supported cleanly, report the
      idiomatic alternative (agent handoff) and flag it as a plan change.
-   - Whether the framework exposes a built-in way to end a session / hang up,
+   - ~~Whether the framework exposes a built-in way to end a session / hang up,
      or whether the idiomatic pattern is an `end_call` tool. If the latter,
-     there is a fourth tool and the plan needs updating.
+     there is a fourth tool and the plan needs updating.~~
+     **RESOLVED in Phase 2.** It is a tool, so there is a fourth tool and the
+     D10 table above has been updated. The framework supplies it —
+     `livekit.agents.beta.tools.EndCallTool`, verified present in the installed
+     1.8.2 — so it is not hand-written. Pass `ignore_on_enter=True` or the model
+     can hang up during the opening; `delete_room=True` disconnects SIP callers,
+     which is what Phase 8 wants. Note the `beta` namespace may move.
    - How to run the agent locally with laptop mic/speakers, no telephony
 2. **LiveKit dispatch**: how an agent is attached to a specific room, and how
    that is combined with `CreateSIPParticipant` for an outbound call.
