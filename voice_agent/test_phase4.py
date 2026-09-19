@@ -36,6 +36,13 @@ os.environ.setdefault("DESTINATION_PHONE_NUMBER", "+10000000000")
 # Phase 4 is about the record and the seam, not the analysis. Switching it off
 # keeps this suite free of inference calls; Phase 5's suite covers the analysis.
 os.environ.setdefault("ANALYSIS_ENABLED", "false")
+
+# setdefault would NOT be enough here, and this is not hypothetical: section 7
+# runs the real entrypoint, which calls load_target_patient(), which loads .env,
+# which sets OPIK_ENABLED=true -- so this suite quietly exported four junk
+# "fake-job" traces to a real Opik project before this line existed. A test
+# suite must not write to production telemetry. Forced, not defaulted.
+os.environ["OPIK_ENABLED"] = "false"
 # Section 7 constructs the real AgentSession, which validates that credentials
 # are PRESENT before it will build. These are placeholders: nothing connects,
 # nothing authenticates, and AgentSession.start is replaced with a no-op.

@@ -566,7 +566,25 @@ def load_target_patient() -> Patient:
     return get_patient(PATIENTS_FILE, patient_id)
 
 
-server = AgentServer()
+# The default `shutdown_process_timeout` is 10s, sized for an agent that does
+# nothing once the call ends. This one does four things -- flush the trace, wait
+# for the recording, analyse the transcript, flush again -- and overrunning the
+# deadline means the supervisor kills the process mid-flush, losing exactly the
+# telemetry the shutdown existed to deliver. Raised deliberately rather than
+# squeezing each step into a budget that was never meant to hold them:
+#
+#   trace flush        <= 3s   (OPIK_FLUSH_TIMEOUT_SECONDS)
+#   audio wait         <= 1.5s (AUDIO_WAIT_SECONDS)
+#   analysis           <= 6s   (ANALYSIS_TIMEOUT_SECONDS)
+#   analysis flush     <= 3s
+#   ------------------------
+#   worst case         ~13.5s, comfortably inside 30
+#
+# Every step above is independently capped, so this raises the ceiling without
+# removing any of the individual guards.
+SHUTDOWN_TIMEOUT_SECONDS = 30.0
+
+server = AgentServer(shutdown_process_timeout=SHUTDOWN_TIMEOUT_SECONDS)
 
 
 def attach_recorder(session: AgentSession, recorder: CallRecorder) -> None:

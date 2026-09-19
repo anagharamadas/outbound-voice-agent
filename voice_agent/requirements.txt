@@ -4,3 +4,8 @@
 livekit-agents==1.8.2
 livekit-api==1.2.1
 python-dotenv==1.2.3
+
+# Observability. Imported by exactly one file, src/opik_integration.py -- the
+# agent neither imports it nor knows it exists (D5). Removing this line and
+# deleting that file leaves a working agent.
+opik==2.2.71

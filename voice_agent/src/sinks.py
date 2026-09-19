@@ -166,16 +166,44 @@ class GuardedSink:
 def build_sink() -> GuardedSink:
     """The single selection point. Everything else takes whatever this returns.
 
-    Phase 6 adds the Opik branch here and nowhere else. Note what is absent:
-    this module does not import Opik, does not name an Opik symbol, and will
-    keep working if `opik_integration.py` is deleted.
+    The Opik branch lives here and nowhere else. Note what is absent from the
+    module scope above: no Opik import, no Opik symbol. The import below is
+    inside the branch on purpose, so a missing package or a deleted
+    `opik_integration.py` degrades to the no-op sink instead of breaking the
+    agent -- loudly, because silence would read as "my traces are being sent".
     """
     enabled = (os.getenv("OPIK_ENABLED") or "").strip().lower() in ("1", "true", "yes")
-    if enabled:
-        # Loud on purpose. Someone who set OPIK_ENABLED=true and got silence
-        # would reasonably conclude their traces were being sent.
-        logger.warning(
-            "OPIK_ENABLED is set but no Opik sink is implemented yet (arrives in "
-            "Phase 6); falling back to the no-op sink. Nothing is being exported."
+    if not enabled:
+        logger.debug("observability: OPIK_ENABLED is not set, using the no-op sink")
+        return GuardedSink(NoOpSink())
+
+    # The import is INSIDE the branch, not at module scope. That is what makes
+    # "delete opik_integration.py and the agent still runs" true rather than
+    # aspirational: with Opik switched off the module is never imported, and the
+    # package need not even be installed.
+    try:
+        from .opik_integration import OpikSink
+    except ImportError:
+        try:
+            from src.opik_integration import OpikSink  # script-mode fallback
+        except ImportError:
+            logger.exception(
+                "OPIK_ENABLED is set but the Opik sink could not be imported "
+                "(is `opik` installed?); falling back to the no-op sink. "
+                "NOTHING IS BEING EXPORTED."
+            )
+            return GuardedSink(NoOpSink())
+
+    try:
+        sink = OpikSink()
+    except Exception:
+        # A bad API key or an unreachable host surfaces here. Loud, and then the
+        # call proceeds -- observability is never worth dropping a patient call.
+        logger.exception(
+            "OPIK_ENABLED is set but the Opik client could not be constructed; "
+            "falling back to the no-op sink. NOTHING IS BEING EXPORTED."
         )
-    return GuardedSink(NoOpSink())
+        return GuardedSink(NoOpSink())
+
+    logger.info("observability: exporting to Opik")
+    return GuardedSink(sink)
