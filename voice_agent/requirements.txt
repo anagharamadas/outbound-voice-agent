@@ -1,2 +1,6 @@
-livekit-api
-python-dotenv
+# Pinned exactly (PLAN.md Phase 2 task 1). The Phase 0 recon read framework
+# source from GitHub main; everything in src/agent.py was re-confirmed against
+# these installed versions, not against main. Re-run that check if you bump.
+livekit-agents==1.8.2
+livekit-api==1.2.1
+python-dotenv==1.2.3
