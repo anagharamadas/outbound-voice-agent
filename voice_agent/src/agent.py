@@ -38,6 +38,7 @@ from livekit.agents.beta.tools import EndCallTool
 from livekit.agents.llm import ToolError
 
 try:
+    from . import booking
     from .patient import Health, Identity, Patient, get_patient
     from .prompts import CLINIC_NAME, unverified_instructions, verified_instructions
     from .verification import (
@@ -58,6 +59,7 @@ except ImportError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src import booking
     from src.patient import Health, Identity, Patient, get_patient
     from src.prompts import CLINIC_NAME, unverified_instructions, verified_instructions
     from src.verification import (
@@ -153,6 +155,63 @@ class VerifiedAgent(Agent):
         self._health = health
         # Carried across the handoff so the Phase 5 record is complete (D4).
         self.verification_log: list[VerificationAttempt] = list(verification_log or [])
+        # Phase 3 task 3: every booking tool call and its result.
+        self.tool_log: list[booking.ToolCallRecord] = []
+        self.confirmation_id: str | None = None
+
+    @function_tool
+    async def get_available_slots(self, context: RunContext) -> str:
+        """List the appointment times that can be booked.
+
+        Call this before offering any time to the person. Offer only the times
+        this returns.
+        """
+        slots = booking.get_available_slots()
+        self._record_tool("get_available_slots", {}, f"{len(slots)} slot(s)", True)
+        if not slots:
+            return "no_slots_available"
+        # The id is what book_appointment takes; the spoken form is what to say.
+        return "\n".join(f"{s.slot_id} — {s.spoken()}" for s in slots)
+
+    @function_tool
+    async def book_appointment(self, context: RunContext, slot_id: str) -> str:
+        """Book one of the available appointment times.
+
+        Only call this with a slot id returned by get_available_slots, and only
+        after the person has agreed to that specific time.
+
+        Args:
+            slot_id: the identifier of the chosen slot, exactly as it was
+                listed by get_available_slots.
+        """
+        # `slot_id` is an opaque string, deliberately NOT an enum of real times
+        # (D12 rule 3): tool schemas are sent to the model, so putting live data
+        # in one widens the surface for no benefit. Validation happens in code.
+        result = booking.book_appointment(slot_id=slot_id, patient_id=self._patient_id)
+        if result.succeeded:
+            self._record_tool(
+                "book_appointment", {"slot_id": slot_id}, result.confirmation_id, True
+            )
+            self.confirmation_id = result.confirmation_id
+            return (
+                f"booked. confirmation_id={result.confirmation_id}. "
+                f"Read the confirmation id back to the person, then confirm the "
+                f"appointment is with {result.doctor}."
+            )
+        self._record_tool("book_appointment", {"slot_id": slot_id}, result.reason, False)
+        # Tell the model plainly that nothing was booked. A vague failure string
+        # invites it to imply success.
+        return (
+            f"NOT booked. reason={result.reason}. {result.message} "
+            f"Tell the person honestly that the appointment was not made. "
+            f"Do not give them a confirmation id and do not say it is booked."
+        )
+
+    def _record_tool(self, name: str, args: dict[str, str], result: str, ok: bool) -> None:
+        """Phase 3 task 3. Phase 4 lifts this into the CallRecord."""
+        self.tool_log.append(
+            booking.ToolCallRecord(name=name, arguments=args, result=result, succeeded=ok)
+        )
 
     async def on_enter(self) -> None:
         """Speak as soon as the handoff lands.
