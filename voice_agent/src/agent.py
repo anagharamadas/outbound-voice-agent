@@ -26,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -81,13 +82,14 @@ except ImportError:
 
 logger = logging.getLogger("healthcare-agent")
 
-PATIENTS_FILE = Path(__file__).resolve().parent.parent / "data" / "patients.json"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PATIENTS_FILE = PROJECT_ROOT / "data" / "patients.json"
 
 # Where the finished CallRecord is dumped for inspection. This is NOT the
 # observability sink -- it is written whatever sink is configured, which is how
 # the Phase 4 exit test can show a complete record with observability switched
 # off entirely. Gitignored: these files hold biomarkers and a full transcript.
-CALL_RECORDS_DIR = Path(__file__).resolve().parent.parent / "call_records"
+CALL_RECORDS_DIR = PROJECT_ROOT / "call_records"
 
 # Model IDs are taken from the Literal types in the installed package
 # (livekit.agents.inference.STTModels / LLMModels / TTSModels), not from memory.
@@ -431,7 +433,20 @@ def load_target_patient() -> Patient:
 
     In console mode there is no dispatch metadata, so PATIENT_ID selects the
     record. Phase 8 replaces this with data carried on the job.
+
+    .env is loaded here for the reason dispatch.py documents at its own
+    `load_config()` call: patients.json may reference ${DESTINATION_PHONE_NUMBER},
+    and that has to be in the environment before the record is parsed. The agent
+    runs in a SEPARATE worker process that inherits nothing from the dispatcher,
+    so the dispatcher having loaded .env does not help here. Without this,
+    console mode crashes on P001 -- the default patient -- before reaching any
+    agent code.
+
+    `load_dotenv` rather than `load_config`: a console run never dials, so
+    demanding a trunk id and a Twilio number would reject a session that has no
+    use for either.
     """
+    load_dotenv(PROJECT_ROOT / ".env")
     patient_id = (os.getenv("PATIENT_ID") or "P001").strip()
     return get_patient(PATIENTS_FILE, patient_id)
 
