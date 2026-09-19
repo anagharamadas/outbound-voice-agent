@@ -72,20 +72,6 @@ class BookingFailure:
 REASONS = ("unknown_slot", "slot_taken", "backend_unavailable")
 
 
-@dataclass(frozen=True)
-class ToolCallRecord:
-    """One booking tool invocation, for later logging (Phase 3 task 3).
-
-    Phase 4 lifts this into events.py as `ToolInvocation`; it lives here for now
-    so Phase 3 stands on its own.
-    """
-
-    name: str
-    arguments: dict[str, str]
-    result: str
-    succeeded: bool
-
-
 def _mode() -> str:
     return (os.getenv("BOOKING_MODE") or "normal").strip().lower()
 

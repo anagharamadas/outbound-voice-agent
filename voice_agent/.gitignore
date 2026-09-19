@@ -12,3 +12,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Call records: biomarkers + full transcript. Patient health data, never commit.
+call_records/

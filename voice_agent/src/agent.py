@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from livekit.agents import (
     Agent,
@@ -35,12 +37,14 @@ from livekit.agents import (
     inference,
 )
 from livekit.agents.beta.tools import EndCallTool
-from livekit.agents.llm import ToolError
+from livekit.agents.llm import ChatMessage, ToolError
 
 try:
     from . import booking
+    from .events import CallRecorder, ToolInvocation, from_epoch, utcnow
     from .patient import Health, Identity, Patient, get_patient
     from .prompts import CLINIC_NAME, unverified_instructions, verified_instructions
+    from .sinks import ObservabilitySink, build_sink
     from .verification import (
         ATTEMPTS_EXHAUSTED,
         COULD_NOT_UNDERSTAND,
@@ -60,8 +64,10 @@ except ImportError:
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src import booking
+    from src.events import CallRecorder, ToolInvocation, from_epoch, utcnow
     from src.patient import Health, Identity, Patient, get_patient
     from src.prompts import CLINIC_NAME, unverified_instructions, verified_instructions
+    from src.sinks import ObservabilitySink, build_sink
     from src.verification import (
         ATTEMPTS_EXHAUSTED,
         COULD_NOT_UNDERSTAND,
@@ -76,6 +82,12 @@ except ImportError:
 logger = logging.getLogger("healthcare-agent")
 
 PATIENTS_FILE = Path(__file__).resolve().parent.parent / "data" / "patients.json"
+
+# Where the finished CallRecord is dumped for inspection. This is NOT the
+# observability sink -- it is written whatever sink is configured, which is how
+# the Phase 4 exit test can show a complete record with observability switched
+# off entirely. Gitignored: these files hold biomarkers and a full transcript.
+CALL_RECORDS_DIR = Path(__file__).resolve().parent.parent / "call_records"
 
 # Model IDs are taken from the Literal types in the installed package
 # (livekit.agents.inference.STTModels / LLMModels / TTSModels), not from memory.
@@ -143,6 +155,7 @@ class VerifiedAgent(Agent):
         identity_payload: dict[str, str],
         clinic_name: str = CLINIC_NAME,
         verification_log: list[VerificationAttempt] | None = None,
+        tool_log: list[ToolInvocation] | None = None,
     ) -> None:
         super().__init__(
             instructions=verified_instructions(
@@ -153,10 +166,13 @@ class VerifiedAgent(Agent):
         self._patient_id = patient_id
         self._identity = identity
         self._health = health
-        # Carried across the handoff so the Phase 5 record is complete (D4).
+        # Both carried across the handoff so the call record is complete (D4).
+        # The verification calls happened on the PREVIOUS agent -- without
+        # carrying the tool log the record would show a booking with no
+        # verification preceding it, which is exactly the shape Phase 7 checks
+        # for and would read as a privacy failure that did not occur.
         self.verification_log: list[VerificationAttempt] = list(verification_log or [])
-        # Phase 3 task 3: every booking tool call and its result.
-        self.tool_log: list[booking.ToolCallRecord] = []
+        self.tool_log: list[ToolInvocation] = list(tool_log or [])
         self.confirmation_id: str | None = None
 
     @function_tool
@@ -208,9 +224,17 @@ class VerifiedAgent(Agent):
         )
 
     def _record_tool(self, name: str, args: dict[str, str], result: str, ok: bool) -> None:
-        """Phase 3 task 3. Phase 4 lifts this into the CallRecord."""
+        """Phase 4: this is the lift booking.ToolCallRecord anticipated.
+
+        The timestamp is the addition. Phase 3 had no use for one; Phase 7's
+        premature-disclosure check is a comparison between when verification
+        succeeded and when a biomarker was first spoken, and neither side of
+        that is answerable without a clock.
+        """
         self.tool_log.append(
-            booking.ToolCallRecord(name=name, arguments=args, result=result, succeeded=ok)
+            ToolInvocation(
+                name=name, arguments=args, result=result, at=utcnow(), succeeded=ok
+            )
         )
 
     async def on_enter(self) -> None:
@@ -261,6 +285,9 @@ class UnverifiedAgent(Agent):
         self._health = patient.health
         self._verification_attempts = 0
         self.verification_log: list[VerificationAttempt] = []
+        # Verification is a tool call (D11), so it belongs in the same log as
+        # the booking calls -- one timestamped sequence, not two to reconcile.
+        self.tool_log: list[ToolInvocation] = []
 
     async def on_enter(self) -> None:
         """Speak first. This is an outbound call -- we placed it, so the person
@@ -344,6 +371,7 @@ class UnverifiedAgent(Agent):
                 identity_payload=self._identity_payload,
                 clinic_name=self._clinic_name,
                 verification_log=self.verification_log,
+                tool_log=self.tool_log,
             )
         except Exception:
             logger.exception("verified agent construction failed after a successful check")
@@ -357,6 +385,13 @@ class UnverifiedAgent(Agent):
 
         The expected value is never stored -- this record is bound for the
         observability platform.
+
+        Written twice, deliberately, because the two serve different readers.
+        `VerificationAttempt` is the domain detail: which identifier kind, which
+        attempt number, whether it spent one of the two. `ToolInvocation` is the
+        timestamped event, which is what Phase 7 compares biomarker mentions
+        against. Deriving one from the other later would mean re-deciding what
+        counts as "the moment verification succeeded" at analysis time.
         """
         self.verification_log.append(
             VerificationAttempt(
@@ -365,6 +400,17 @@ class UnverifiedAgent(Agent):
                 stated=stated,
                 attempt_number=self._verification_attempts,
                 consumed_attempt=consumed,
+            )
+        )
+        self.tool_log.append(
+            ToolInvocation(
+                name="verify_patient_identity",
+                # What the person said is already in the transcript, so logging
+                # it here adds no disclosure. The EXPECTED value is not here.
+                arguments={"stated_identifier": stated},
+                result=outcome,
+                at=utcnow(),
+                succeeded=outcome == VERIFIED,
             )
         )
 
@@ -393,6 +439,81 @@ def load_target_patient() -> Patient:
 server = AgentServer()
 
 
+def attach_recorder(session: AgentSession, recorder: CallRecorder) -> None:
+    """Subscribe the recorder to the session's own events.
+
+    Both event names are from the installed package's `EventTypes` literal, not
+    from memory. `conversation_item_added` carries either a `ChatMessage` or an
+    `AgentHandoff`, so the type check is load-bearing rather than defensive --
+    the handoff this system performs on every successful verification arrives
+    through this same callback.
+    """
+
+    @session.on("conversation_item_added")
+    def _on_item(event: Any) -> None:
+        item = event.item
+        if not isinstance(item, ChatMessage) or item.role not in ("user", "assistant"):
+            return
+        text = item.text_content
+        if not text:
+            return
+        recorder.add_turn(
+            role=item.role,
+            text=text,
+            # The framework's own timestamp, not ours. Ours would be the moment
+            # we happened to be notified, which is not when the turn occurred.
+            at=from_epoch(item.created_at),
+            interrupted=bool(item.interrupted),
+        )
+
+    @session.on("close")
+    def _on_close(event: Any) -> None:
+        reason = getattr(event.reason, "value", event.reason)
+        recorder.note_end(reason=str(reason), at=from_epoch(event.created_at))
+
+
+def finish_call(
+    *,
+    recorder: CallRecorder,
+    sink: ObservabilitySink,
+    agent_holder: Callable[[], Agent],
+    reason: str,
+) -> None:
+    """Build the record, write it where a human can read it, hand it to the sink.
+
+    Ordering matters. The local JSON file is written FIRST and independently of
+    the sink, so a sink that is broken, misconfigured or absent still leaves a
+    complete record on disk. The inspection artifact must not depend on the
+    thing being inspected.
+    """
+    recorder.note_end(reason=reason)
+    agent = agent_holder()
+    record = recorder.build(
+        verification_attempts=tuple(getattr(agent, "verification_log", ())),
+        tool_invocations=tuple(getattr(agent, "tool_log", ())),
+    )
+
+    try:
+        written = record.write_json(CALL_RECORDS_DIR / f"{record.call_id}.json")
+        logger.info("call record written to %s", written)
+    except OSError:
+        # Not fatal: the sink may still deliver. Loud, because the exit test and
+        # every later debugging session read this file.
+        logger.exception("could not write the local call record")
+
+    result = sink.on_call_end(record)
+    if result.delivered:
+        logger.info(
+            "call %s recorded: %d turn(s), %d tool call(s), end_reason=%s",
+            record.call_id,
+            len(record.transcript),
+            len(record.tool_invocations),
+            record.end_reason,
+        )
+    # The failure branch is not logged here. GuardedSink has already logged it
+    # at ERROR with the detail, and a second line would just be noise.
+
+
 @server.rtc_session()
 async def entrypoint(ctx: JobContext) -> None:
     patient = load_target_patient()
@@ -400,7 +521,52 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("starting session for patient %s", patient.patient_id)
 
     session = build_session()
-    await session.start(agent=UnverifiedAgent(patient), room=ctx.room)
+    agent = UnverifiedAgent(patient)
+
+    recorder = CallRecorder(
+        call_id=ctx.job.id,
+        room_name=getattr(ctx.room, "name", "") or "",
+        patient=patient,
+    )
+    sink = build_sink()
+    sink.on_call_start(recorder.call_id)
+    attach_recorder(session, recorder)
+
+    def current_agent() -> Agent:
+        """The agent holding the logs at the end of the call.
+
+        After a successful verification this is the `VerifiedAgent`, which
+        carries the unverified agent's logs across the handoff. Falling back to
+        the agent we started with covers the call that never verified -- and
+        `current_agent` raises rather than returning None once the session has
+        been torn down, which is precisely when this runs.
+        """
+        try:
+            return session.current_agent
+        except RuntimeError:
+            return agent
+
+    finalised = False
+
+    async def on_shutdown(reason: str = "job_shutdown") -> None:
+        # The job may shut down for reasons that never produced a close event,
+        # and a close event does not itself end the job. Both paths lead here,
+        # so this must be idempotent.
+        nonlocal finalised
+        if finalised:
+            return
+        finalised = True
+        finish_call(
+            recorder=recorder, sink=sink, agent_holder=current_agent, reason=reason
+        )
+
+    # VERIFIED on the installed livekit-agents 1.8.2: JobContext exposes
+    # `add_shutdown_callback`, and a callback whose `co_argcount >= 1` is passed
+    # the shutdown reason (job.py, add_shutdown_callback). This is the hook that
+    # makes the record survive a process that exits the moment the call ends.
+    ctx.add_shutdown_callback(on_shutdown)
+
+    await session.start(agent=agent, room=ctx.room)
 
 
 if __name__ == "__main__":
