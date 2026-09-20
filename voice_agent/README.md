@@ -521,7 +521,7 @@ hiding them would be worse than not building them.
 ./venv/bin/python test_phase8.py    # telephony wiring — dials nothing
 ```
 
-**156 checks on a fresh clone**, rising to 174 once you have made some calls —
+**160 checks on a fresh clone**, rising to 181 once you have made some calls —
 several sections additionally run against every record in `call_records/`, which
 a clone does not have. Those sections fall back to a synthetic fixture, so the
 suites are self-contained; a real record is preferred when present because it
