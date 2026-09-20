@@ -225,8 +225,18 @@ async def run() -> None:
         rec = CallRecord.read_json(newest)
         print(f"        using {newest.name}: {len(rec.transcript)} turns, "
               f"{len(rec.tool_invocations)} tool call(s)")
-        check("round-trips byte-identically",
-              rec.to_dict() == json.loads(newest.read_text(encoding="utf-8")))
+        # NOT byte-identical against the file: a record written before a field
+        # was added will not match a to_dict() that now emits it, and that is
+        # correct behaviour rather than a defect. What must hold is that no
+        # information is LOST -- the round-trip is stable, and every field the
+        # file does carry survives it.
+        on_disk = json.loads(newest.read_text(encoding="utf-8"))
+        check("round-trip is stable (no information lost)",
+              CallRecord.from_dict(rec.to_dict()).to_dict() == rec.to_dict())
+        preserved = {k: v for k, v in rec.to_dict().items() if k in on_disk}
+        check("every field on disk survives the round-trip",
+              preserved == on_disk,
+              f"{sorted(set(rec.to_dict()) - set(on_disk))} are newer fields")
 
         f = compute_facts(rec)
         expect_booked = any(

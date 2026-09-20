@@ -278,6 +278,44 @@ async def run(tmp: Path) -> None:
     finally:
         _os.environ.pop("CALL_AUDIO_DIR", None)
 
+    print("\n1c. A slow sink does not block the event loop")
+    import asyncio as _aio
+
+    class SlowSink:
+        name = "slow"
+        def on_call_start(self, record_id): time.sleep(0.4)
+        def on_call_end(self, record):
+            time.sleep(0.4)
+            from src.sinks import EmitResult as _E
+            return _E.ok()
+        def on_analysis(self, record, analysis):
+            from src.sinks import EmitResult as _E
+            return _E.ok()
+
+    # If the sink ran on the loop, this heartbeat would stall with it. Opik's
+    # flush() is exactly this shape -- it blocks until delivery.
+    ticks = 0
+    async def heartbeat():
+        nonlocal ticks
+        try:
+            while True:
+                await _aio.sleep(0.05)
+                ticks += 1
+        except _aio.CancelledError:
+            pass
+
+    hb = _aio.create_task(heartbeat())
+    agent_mod.CALL_RECORDS_DIR = tmp / "slow"
+    rec = build_populated_recorder()
+    rec.call_id = "slow-sink"
+    await agent_mod.finish_call(recorder=rec, sink=GuardedSink(SlowSink()),
+                                agent_holder=lambda: _FakeAgent(attempts, tools),
+                                reason="user_initiated")
+    hb.cancel(); await hb
+    check("the loop kept running while the sink blocked", ticks >= 4,
+          f"{ticks} heartbeats during a 0.4s blocking sink")
+    check("the record was still written", (tmp / "slow" / "slow-sink.json").exists())
+
     print("\n2. note_end keeps the FIRST reason, not the last")
     r2 = CallRecorder(call_id="c2", room_name="r", patient=get_patient(PATIENTS_FILE, "P001"))
     r2.note_end(reason="user_initiated")

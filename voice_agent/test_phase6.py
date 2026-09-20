@@ -209,6 +209,20 @@ def run(record: CallRecord) -> None:
     else:
         print("  SKIP  the saved record has no audio_path")
 
+    print("\n5b. A REMOTE recording is referenced, not attached")
+    remote = record.with_audio_egress("EG_phone123").with_audio_path(
+        "/livekit/egress/call-P001.ogg")   # a path on someone else's machine
+    c = FakeClient()
+    s3 = OpikSink(client=c, project_name="t")
+    s3.on_call_end(remote)
+    r = s3.on_analysis(remote, analysis or {})
+    check("export succeeds", r.delivered, r.detail)
+    check("nothing uploaded (the file is not here)", c.attachments == [])
+    md = c.traces[0].kw.get("metadata") or {}
+    check("the egress id is recorded", md.get("audio_egress_id") == "EG_phone123")
+    check("the trace says the audio is NOT attached", md.get("audio_is_attached") is False,
+          "so a reviewer knows to look at the egress rather than hunt for a player")
+
     print("\n6. A dropped flush is reported, not swallowed")
     bad = OpikSink(client=FakeClient(flush_returns=False), project_name="t")
     r = bad.on_call_end(record)

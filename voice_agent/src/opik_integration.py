@@ -261,6 +261,12 @@ class OpikSink:
             "turn_count": len(record.transcript),
             "tool_call_count": len(record.tool_invocations),
             "audio_path": record.audio_path,
+            # Present whether or not a file could be attached, so a reviewer
+            # looking at a phone call's trace can still find the recording.
+            "audio_egress_id": record.audio_egress_id,
+            "audio_is_attached": bool(
+                record.audio_path and os.path.isfile(record.audio_path)
+            ),
             # Present on BOTH sends. It does not depend on the analysis, and the
             # online rule fires on the create as well as the upsert -- a rule
             # that saw it only on the second pass would score half the traces
@@ -348,14 +354,23 @@ class OpikSink:
         return trace
 
     def _attach_audio(self, record: CallRecord, trace: Any) -> None:
-        if not record.audio_path:
+        if not record.audio_path and not record.audio_egress_id:
             logger.debug("opik: no audio to attach for call %s", record.call_id)
             return
+
         path = record.audio_path
-        if not os.path.isfile(path):
-            # Not fatal. The record names a file that is not there, which is
-            # worth knowing about but not worth failing an export over.
-            logger.warning("opik: audio_path %s does not exist; not attaching", path)
+        if not path or not os.path.isfile(path):
+            # A phone call. The recording exists, but not on this machine -- it
+            # was written by LiveKit egress to wherever that egress was pointed.
+            # Recording the reference is the documented fallback and is what the
+            # brief permits; it is NOT a warning, because nothing went wrong.
+            logger.info(
+                "opik: call %s audio is remote (egress=%s, location=%s); "
+                "recording the reference rather than attaching a file",
+                record.call_id,
+                record.audio_egress_id,
+                path,
+            )
             return
         self._client.queue_attachment_upload(
             entity_type="trace",

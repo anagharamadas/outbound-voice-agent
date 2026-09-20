@@ -134,6 +134,28 @@ ANALYSIS_TIMEOUT_SECONDS = 6.0
 # Phase 6 as-is and needs no transcoding.
 AUDIO_EXTENSIONS = (".wav", ".ogg")
 
+# Recording a PHONE call is a different problem from recording a console one.
+# `lk agent console --record` writes a file beside the worker; a phone call has
+# no such file, because the audio never touches this machine -- it flows between
+# LiveKit and the carrier. Recording it means asking LiveKit for an egress.
+#
+# VERIFIED, not assumed: the job arrives with enable_recording=true, and that
+# produced ZERO egress items on the project -- it is LiveKit Cloud's own session
+# flag, not something that yields a file. An explicit egress is required.
+#
+# And the file it writes lands in whatever bucket the request names. With none
+# named it goes to the egress server's own disk, which on LiveKit Cloud this
+# process cannot read. So what is captured here is the REFERENCE -- the egress
+# id, and the location egress reports -- which is what the brief permits
+# ("call recording or audio reference") and what PLAN.md task 5 specifies as the
+# fallback. Point CALL_RECORDING_BUCKET_URI at real storage and the same code
+# yields a fetchable file.
+#
+# Off by default: an egress costs money per call, and a console session already
+# records locally via --record.
+def call_recording_enabled() -> bool:
+    return (os.getenv("CALL_RECORDING_ENABLED") or "").strip().lower() in ("1", "true", "yes")
+
 # The recording lands at almost exactly the moment the job shuts down. Measured
 # on a real recorded call: audio.ogg was written at 22:40:15 and the shutdown
 # callback ran within that same second. Filesystem timestamps are not finer than
@@ -674,6 +696,80 @@ def write_record(record) -> None:
         logger.exception("could not write the local call record")
 
 
+async def start_call_recording(ctx: JobContext, recorder: CallRecorder) -> str | None:
+    """Ask LiveKit to record this room. Best effort, never fatal.
+
+    A failure here must not cost the call. Recording is an artifact of the
+    conversation, not part of it, and a patient waiting on the line does not
+    care that egress was misconfigured.
+    """
+    if not call_recording_enabled():
+        return None
+    room_name = getattr(ctx.room, "name", "") or ""
+    if not room_name:
+        logger.debug("no room name; not starting a recording")
+        return None
+
+    try:
+        from livekit import api as lk_api
+        from livekit.protocol import egress as egress_proto
+
+        lkapi = lk_api.LiveKitAPI()
+        try:
+            info = await lkapi.egress.start_room_composite_egress(
+                lk_api.RoomCompositeEgressRequest(
+                    room_name=room_name,
+                    # There is no video on a phone call, and an audio-only egress
+                    # is cheaper and produces a file Opik can actually preview.
+                    audio_only=True,
+                    file_outputs=[
+                        egress_proto.EncodedFileOutput(
+                            file_type=egress_proto.EncodedFileType.OGG,
+                            filepath=f"{room_name}.ogg",
+                        )
+                    ],
+                )
+            )
+        finally:
+            await lkapi.aclose()
+    except Exception:
+        logger.exception("could not start call recording; continuing without it")
+        return None
+
+    recorder.set_audio_egress(info.egress_id)
+    logger.info("call recording started: egress %s", info.egress_id)
+    return info.egress_id
+
+
+async def resolve_recording_reference(egress_id: str) -> str | None:
+    """Where the recording ended up, if egress has reported it yet.
+
+    Egress finishes writing AFTER the room closes, so this is asked once, late,
+    and not waited on. A reference that is not ready yet is not worth holding a
+    shutdown open for -- the egress id is already in the record, and it is the
+    durable handle.
+    """
+    try:
+        from livekit import api as lk_api
+
+        lkapi = lk_api.LiveKitAPI()
+        try:
+            res = await lkapi.egress.list_egress(lk_api.ListEgressRequest(egress_id=egress_id))
+        finally:
+            await lkapi.aclose()
+    except Exception:
+        logger.exception("could not read back the recording reference")
+        return None
+
+    for item in res.items:
+        for f in item.file_results:
+            if f.location:
+                return f.location
+        if item.file and item.file.location:
+            return item.file.location
+    return None
+
+
 async def finish_call(
     *,
     recorder: CallRecorder,
@@ -720,7 +816,18 @@ async def finish_call(
 
     write_record(record)
 
-    result = sink.on_call_end(record)
+    # OFF THE EVENT LOOP. A sink is a plain synchronous object -- deliberately,
+    # so writing one stays easy -- but Opik's flush() blocks until delivery, and
+    # the framework's loop-blocking detector caught it holding the agent's loop
+    # for ~1.1s on a real call:
+    #
+    #   "synchronous work on the agent loop delays audio and turn handling,
+    #    move it to a thread or an async client"
+    #
+    # It fires during shutdown, so no patient heard a stutter this time. But the
+    # fix belongs HERE rather than inside the Opik sink: any sink may block, and
+    # the seam should not require each one to remember not to.
+    result = await asyncio.to_thread(sink.on_call_end, record)
     if result.delivered:
         logger.info(
             "call %s recorded: %d turn(s), %d tool call(s), end_reason=%s",
@@ -740,6 +847,19 @@ async def finish_call(
     if audio is not None:
         record = record.with_audio_path(str(audio))
         logger.info("call audio found: %s", audio)
+    elif record.audio_egress_id:
+        # A phone call. The file is not here and never will be; record where it
+        # lives instead. `location` may still be empty this early, in which case
+        # the egress id in the record is the reference.
+        location = await resolve_recording_reference(record.audio_egress_id)
+        if location:
+            record = record.with_audio_path(location)
+            logger.info("call recording reference: %s", location)
+        else:
+            logger.info(
+                "call recorded by egress %s; location not reported yet",
+                record.audio_egress_id,
+            )
     else:
         logger.debug("no call audio found for this call")
 
@@ -775,7 +895,7 @@ async def finish_call(
     write_record(record)
 
     if analysis is not None:
-        sink.on_analysis(record, analysis.to_dict())
+        await asyncio.to_thread(sink.on_analysis, record, analysis.to_dict())
         logger.info(
             "call %s analysed: booked=%s verified=%s outcome=%s%s",
             record.call_id,
@@ -805,7 +925,7 @@ async def entrypoint(ctx: JobContext) -> None:
         patient=patient,
     )
     sink = build_sink()
-    sink.on_call_start(recorder.call_id)
+    await asyncio.to_thread(sink.on_call_start, recorder.call_id)
     attach_recorder(session, recorder)
 
     def current_agent() -> Agent:
@@ -841,6 +961,9 @@ async def entrypoint(ctx: JobContext) -> None:
     # the shutdown reason (job.py, add_shutdown_callback). This is the hook that
     # makes the record survive a process that exits the moment the call ends.
     ctx.add_shutdown_callback(on_shutdown)
+
+    # Before the session, so the recording covers the opening line.
+    await start_call_recording(ctx, recorder)
 
     await session.start(agent=agent, room=ctx.room)
 

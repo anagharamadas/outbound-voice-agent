@@ -100,14 +100,24 @@ class CallRecord:
     transcript: tuple[TranscriptTurn, ...] = ()
     tool_invocations: tuple[ToolInvocation, ...] = ()
     verification_attempts: tuple[VerificationAttempt, ...] = ()
-    # Phase 6 attaches the real .wav; the recon confirmed audio/wav is a
-    # supported attachment type, so a path here is preferred to a bare URI.
+    # A local file path when one exists -- a console recording -- or a remote
+    # URI when the recording lives somewhere this process cannot read, which is
+    # the case for a phone call recorded by LiveKit egress. Phase 4 task 1
+    # specified "path or URI" for exactly this reason.
     audio_path: str | None = None
+    # The egress that produced it, when the recording is remote. Kept separate
+    # from audio_path because it identifies the recording even before the file
+    # location is known -- egress finishes writing after the room is gone.
+    audio_egress_id: str | None = None
     analysis: dict[str, Any] | None = None
 
     def with_analysis(self, analysis: dict[str, Any]) -> CallRecord:
         """Phase 5's entry point. Returns a new record; does not mutate."""
         return replace(self, analysis=analysis)
+
+    def with_audio_egress(self, egress_id: str) -> CallRecord:
+        """Note which egress is recording this call."""
+        return replace(self, audio_egress_id=egress_id)
 
     def with_audio_path(self, audio_path: str) -> CallRecord:
         """Attach the recording once it exists.
@@ -156,6 +166,7 @@ class CallRecord:
             "tool_invocations": [tool(t) for t in self.tool_invocations],
             "verification_attempts": [asdict(v) for v in self.verification_attempts],
             "audio_path": self.audio_path,
+            "audio_egress_id": self.audio_egress_id,
             "analysis": self.analysis,
         }
 
@@ -209,6 +220,8 @@ class CallRecord:
                 VerificationAttempt(**v) for v in data.get("verification_attempts", ())
             ),
             audio_path=data.get("audio_path"),
+            # .get, so records written before this field existed still load.
+            audio_egress_id=data.get("audio_egress_id"),
             analysis=data.get("analysis"),
         )
 
@@ -251,6 +264,7 @@ class CallRecorder:
         self._turns: list[TranscriptTurn] = []
         self._tools: list[ToolInvocation] = []
         self._audio_path: str | None = None
+        self._audio_egress_id: str | None = None
 
     @property
     def started_at(self) -> datetime:
@@ -284,6 +298,9 @@ class CallRecorder:
 
     def set_audio_path(self, path: str | None) -> None:
         self._audio_path = path
+
+    def set_audio_egress(self, egress_id: str | None) -> None:
+        self._audio_egress_id = egress_id
 
     def note_end(self, *, reason: str, at: datetime | None = None) -> None:
         """Record why the call ended.
@@ -326,4 +343,5 @@ class CallRecorder:
             tool_invocations=tuple(self._tools) + tuple(tool_invocations),
             verification_attempts=tuple(verification_attempts),
             audio_path=self._audio_path,
+            audio_egress_id=self._audio_egress_id,
         )
