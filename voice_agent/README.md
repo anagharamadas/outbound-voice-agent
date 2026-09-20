@@ -214,6 +214,10 @@ succeeds and nobody joins the room.
 ./venv/bin/python src/agent.py start
 ```
 
+> If this fails with `address already in use` on port 8081, a worker is already
+> running from an earlier attempt. `lsof -ti :8081 | xargs kill` and retry —
+> only one worker at a time.
+
 ```bash
 # terminal 2 — place the call
 ./venv/bin/python dispatch.py --patient-id P001            # dry run: prints the record, dials nothing
@@ -468,8 +472,15 @@ hiding them would be worse than not building them.
 ./venv/bin/python test_phase8.py    # telephony wiring — dials nothing
 ```
 
-174 checks. **None of them place a call, and none write to your Opik project** —
-both verified, after two incidents where test runs polluted a live project.
+**156 checks on a fresh clone**, rising to 174 once you have made some calls —
+several sections additionally run against every record in `call_records/`, which
+a clone does not have. Those sections fall back to a synthetic fixture, so the
+suites are self-contained; a real record is preferred when present because it
+catches shapes a fixture would not think to produce.
+
+**None of them place a call, and none write to your Opik project** — both
+verified by snapshotting the project around a full run, after two incidents
+where test runs polluted a live one.
 
 Two suites can optionally hit the network:
 
