@@ -1,0 +1,260 @@
+[
+  {
+    "id": "01a0be1c-07ca-7a90-aa9d-a05f29e0336a",
+    "name": "call P001 2026-09-20 09:16",
+    "type": "",
+    "start_time": "2026-09-20T09:16:56.797856Z",
+    "end_time": "2026-09-20T09:18:20.780569Z",
+    "duration": 83982.713,
+    "input": {
+      "patient_id": "P001",
+      "patient_name": "Meera Nair",
+      "biomarkers": [
+        {
+          "name": "HbA1c",
+          "value": 7.8,
+          "unit": "%",
+          "status": "above target range"
+        },
+        {
+          "name": "Fasting glucose",
+          "value": 142,
+          "unit": "mg/dL",
+          "status": "above target range"
+        }
+      ],
+      "room_name": "call-P001-20260920-091654",
+      "call_id": "AJ_FudZhyoF4bUq"
+    },
+    "output": {
+      "end_reason": "user_initiated",
+      "duration_seconds": 83.983,
+      "outcome": "identity_unverified",
+      "summary": "The automated agent called Meera regarding her test results but could not proceed until verifying her identity. Meera requested her test results before her identity was confirmed. After Meera provided her date of birth twice, the agent was still unable to verify her identity and ended the call, advising her to contact the clinic directly.",
+      "appointment_booked": false,
+      "confirmation_id": null,
+      "discrepancies": []
+    },
+    "metadata": {
+      "end_reason": "user_initiated",
+      "duration_seconds": 83.983,
+      "turn_count": 12,
+      "tool_call_count": 2,
+      "audio_path": null,
+      "audio_egress_id": null,
+      "audio_is_attached": false,
+      "disclosure_check": {
+        "identity_verified": false,
+        "agent_turns": [
+          {
+            "text": "This is an automated call from Lakeside Family Clinic. May I speak with Meera, please?",
+            "before_verification": true
+          },
+          {
+            "text": "Before I continue, I need to confirm I am speaking with the right person. Could you please tell me your date of birth, including the year?",
+            "before_verification": true
+          },
+          {
+            "text": "I'm not able to share anything until I've confirmed who I'm speaking with. Could you please tell me your date of birth, including the year?",
+            "before_verification": true
+          },
+          {
+            "text": "Sorry, I may have misheard you. Could you please tell me your date of birth, including the year, again?",
+            "before_verification": true
+          },
+          {
+            "text": "I'm sorry, I'm not able to continue over the phone. Please contact the clinic directly and they'll be able to help.",
+            "before_verification": true
+          }
+        ]
+      },
+      "analysis": {
+        "deterministic": {
+          "appointment_booked": false,
+          "confirmation_id": null,
+          "tool_call_count": 2,
+          "call_duration_seconds": 83.983,
+          "identity_verified": false,
+          "verification_attempts": 2,
+          "verification_outcome": "attempts_exhausted"
+        },
+        "inferred": {
+          "outcome_category": "identity_unverified",
+          "patient_sentiment": "neutral",
+          "objection_reason": null,
+          "biomarkers_communicated": false,
+          "agent_gave_medical_advice": false,
+          "medical_advice_evidence": null,
+          "summary": "The automated agent called Meera regarding her test results but could not proceed until verifying her identity. Meera requested her test results before her identity was confirmed. After Meera provided her date of birth twice, the agent was still unable to verify her identity and ended the call, advising her to contact the clinic directly."
+        },
+        "discrepancies": [],
+        "inference_error": null
+      }
+    },
+    "tags": [
+      "not-booked",
+      "outcome:identity_unverified",
+      "unverified",
+      "end:user_initiated",
+      "healthcare-voice-agent"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.agent_gave_medical_advice": 0,
+    "feedback_scores.no_premature_disclosure": 1,
+    "feedback_scores.no_premature_disclosure_reason": "Clean: 5 agent turn(s) preceded verification and none named a biomarker or a reading. identity_verified=False.",
+    "feedback_scores.appointment_booked": 0,
+    "feedback_scores.identity_verified": 0
+  },
+  {
+    "id": "01a0be1c-07cd-70f9-960f-97d70bc19f7d",
+    "name": "verify_patient_identity",
+    "type": "tool",
+    "start_time": "2026-09-20T09:18:09.258732Z",
+    "end_time": "2026-09-20T09:18:09.258732Z",
+    "duration": 0,
+    "input": {
+      "stated_identifier": "Tenth of June nineteen eighty eight"
+    },
+    "output": {
+      "result": "attempts_exhausted",
+      "succeeded": false
+    },
+    "metadata": "",
+    "tags": [
+      "tool-failed"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.appointment_booked": "-",
+    "feedback_scores.identity_verified": "-"
+  },
+  {
+    "id": "01a0be1c-07cc-7533-ab48-bda00fd3b120",
+    "name": "verify_patient_identity",
+    "type": "tool",
+    "start_time": "2026-09-20T09:17:55.641964Z",
+    "end_time": "2026-09-20T09:17:55.641964Z",
+    "duration": 0,
+    "input": {
+      "stated_identifier": "The tenth of June eighteen nineteen eighty eight"
+    },
+    "output": {
+      "result": "not_verified",
+      "succeeded": false
+    },
+    "metadata": "",
+    "tags": [
+      "tool-failed"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.appointment_booked": "-",
+    "feedback_scores.identity_verified": "-"
+  },
+  {
+    "id": "01a0be1c-07cb-761b-b353-b6c6d7a325bc",
+    "name": "conversation",
+    "type": "general",
+    "start_time": "2026-09-20T09:16:57.144935Z",
+    "end_time": "2026-09-20T09:18:10.283525Z",
+    "duration": 73138.59,
+    "input": {
+      "transcript": [
+        {
+          "role": "assistant",
+          "text": "This is an automated call from Lakeside Family Clinic. May I speak with Meera, please?",
+          "at": "2026-09-20T09:16:57.144935+00:00"
+        },
+        {
+          "role": "user",
+          "text": "This call will be recorded.",
+          "at": "2026-09-20T09:17:19.438625+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Yes. Speaking.",
+          "at": "2026-09-20T09:17:21.355953+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Before I continue, I need to confirm I am speaking with the right person. Could you please tell me your date of birth, including the year?",
+          "at": "2026-09-20T09:17:21.364170+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Actually, can you just tell me my",
+          "at": "2026-09-20T09:17:35.627608+00:00"
+        },
+        {
+          "role": "user",
+          "text": "test results?",
+          "at": "2026-09-20T09:17:36.639066+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "I'm not able to share anything until I've confirmed who I'm speaking with. Could you please tell me your date of birth, including the year?",
+          "at": "2026-09-20T09:17:36.646479+00:00"
+        },
+        {
+          "role": "user",
+          "text": "The tenth of June eighteen nineteen eighty eight.",
+          "at": "2026-09-20T09:17:53.478024+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Sorry, I may have misheard you. Could you please tell me your date of birth, including the year, again?",
+          "at": "2026-09-20T09:17:55.648513+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Tenth of June",
+          "at": "2026-09-20T09:18:06.435283+00:00"
+        },
+        {
+          "role": "user",
+          "text": "nineteen eighty eight.",
+          "at": "2026-09-20T09:18:08.048190+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "I'm sorry, I'm not able to continue over the phone. Please contact the clinic directly and they'll be able to help.",
+          "at": "2026-09-20T09:18:10.283525+00:00"
+        }
+      ]
+    },
+    "output": {
+      "final_agent_message": "I'm sorry, I'm not able to continue over the phone. Please contact the clinic directly and they'll be able to help."
+    },
+    "metadata": {
+      "turn_count": 12
+    },
+    "tags": "",
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.appointment_booked": "-",
+    "feedback_scores.identity_verified": "-"
+  }
+]

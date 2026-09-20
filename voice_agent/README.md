@@ -20,6 +20,14 @@ and implementation, each with the evidence that drove it.
 [RISKS.md](RISKS.md) — the risk register, including four issues that occurred
 during the build and how they were caught.
 
+**Demo:** [`demo_recording.mp4`](../demo_recording.mp4) — a real
+outbound call placed from the terminal, the post-call analysis, and the Opik
+trace with its evaluation score. The two traces shown are exported alongside it
+as [`clip1_opik_trace.json`](../clip1_opik_trace.json) (identity verified,
+appointment booked) and [`clip2_opik_trace.json`](../clip2_opik_trace.json)
+(identity **not** verified — note that no biomarker appears anywhere in that
+transcript, and there is no `book_appointment` span).
+
 ## Contents
 
 - [The idea in one picture](#the-idea-in-one-picture)

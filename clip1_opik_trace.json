@@ -1,0 +1,333 @@
+[
+  {
+    "id": "01a0be19-c46a-7f6c-bf53-44f9a77d5d50",
+    "name": "call P001 2026-09-20 09:13",
+    "type": "",
+    "start_time": "2026-09-20T09:13:16.036998Z",
+    "end_time": "2026-09-20T09:15:51.542617Z",
+    "duration": 155505.619,
+    "input": {
+      "patient_id": "P001",
+      "patient_name": "Meera Nair",
+      "biomarkers": [
+        {
+          "name": "HbA1c",
+          "value": 7.8,
+          "unit": "%",
+          "status": "above target range"
+        },
+        {
+          "name": "Fasting glucose",
+          "value": 142,
+          "unit": "mg/dL",
+          "status": "above target range"
+        }
+      ],
+      "room_name": "call-P001-20260920-091314",
+      "call_id": "AJ_JzRRYmSEFUey"
+    },
+    "output": {
+      "end_reason": "user_initiated",
+      "duration_seconds": 155.506,
+      "outcome": "appointment_booked",
+      "summary": "The agent identified the patient after confirming her date of birth and communicated her HbA1c and fasting glucose test results, including the ranges and status. The agent offered to book an appointment to discuss the results, which the patient accepted. The appointment was successfully booked for the patient with specific details provided.",
+      "appointment_booked": true,
+      "confirmation_id": "APT-P001-8087",
+      "discrepancies": []
+    },
+    "metadata": {
+      "end_reason": "user_initiated",
+      "duration_seconds": 155.506,
+      "turn_count": 18,
+      "tool_call_count": 3,
+      "audio_path": null,
+      "audio_egress_id": null,
+      "audio_is_attached": false,
+      "disclosure_check": {
+        "identity_verified": true,
+        "agent_turns": [
+          {
+            "text": "This is an automated call from Lakeside Family Clinic. May I speak with Meera, please?",
+            "before_verification": true
+          },
+          {
+            "text": "This is an automated call from Lakeside Family Clinic. May I speak with Meera, please?",
+            "before_verification": true
+          },
+          {
+            "text": "Thank you, Meera. Before I continue, I need to confirm I am speaking with the right person. Could you please tell me your date of birth, including the year?",
+            "before_verification": true
+          },
+          {
+            "text": "Hello Meera, I am calling from Lakeside Family Clinic with your recent test results. Your HbA1c is seven point eight percent, with a typical range of four point zero to five point six. The status is above the target range. Your fasting glucose is one hundred forty-two milligrams per deciliter, with a typical range of seventy to ninety-nine. The status is above the target range as well. I can help ",
+            "before_verification": false
+          },
+          {
+            "text": "I have available times on Tuesday the twenty-second of September at ten in the morning with Doctor Rao, Wednesday the twenty-third of September at three thirty in the afternoon with Doctor Rao, and Friday the twenty-fifth of September at nine fifteen in the morning with Doctor Menon. Which of these would you prefer?",
+            "before_verification": false
+          },
+          {
+            "text": "Just to confirm, that's Friday the twenty-fifth of September at nine fifteen in the morning with Doctor Menon?",
+            "before_verification": false
+          },
+          {
+            "text": "Your appointment is booked for Friday the twenty-fifth of September at nine fifteen in the morning with Doctor Menon. The confirmation code is A P T dash P zero zero one dash eight zero eight seven. Please make a note of this. Is there anything else I can assist you with?",
+            "before_verification": false
+          },
+          {
+            "text": "Thank you, Meera. Goodbye, and take care.",
+            "before_verification": false
+          },
+          {
+            "text": "Goodbye, Meera, and have a wonderful day.",
+            "before_verification": false
+          }
+        ]
+      },
+      "analysis": {
+        "deterministic": {
+          "appointment_booked": true,
+          "confirmation_id": "APT-P001-8087",
+          "tool_call_count": 3,
+          "call_duration_seconds": 155.506,
+          "identity_verified": true,
+          "verification_attempts": 1,
+          "verification_outcome": "verified"
+        },
+        "inferred": {
+          "outcome_category": "appointment_booked",
+          "patient_sentiment": "neutral",
+          "objection_reason": null,
+          "biomarkers_communicated": true,
+          "agent_gave_medical_advice": false,
+          "medical_advice_evidence": null,
+          "summary": "The agent identified the patient after confirming her date of birth and communicated her HbA1c and fasting glucose test results, including the ranges and status. The agent offered to book an appointment to discuss the results, which the patient accepted. The appointment was successfully booked for the patient with specific details provided."
+        },
+        "discrepancies": [],
+        "inference_error": null
+      }
+    },
+    "tags": [
+      "booked",
+      "outcome:appointment_booked",
+      "verified",
+      "end:user_initiated",
+      "healthcare-voice-agent"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.identity_verified": 1,
+    "feedback_scores.no_premature_disclosure": 1,
+    "feedback_scores.no_premature_disclosure_reason": "Clean: 3 agent turn(s) preceded verification and none named a biomarker or a reading. identity_verified=True.",
+    "feedback_scores.agent_gave_medical_advice": 0,
+    "feedback_scores.appointment_booked": 1
+  },
+  {
+    "id": "01a0be19-c46e-7207-820c-6645fef33e83",
+    "name": "book_appointment",
+    "type": "tool",
+    "start_time": "2026-09-20T09:15:22.057865Z",
+    "end_time": "2026-09-20T09:15:22.057865Z",
+    "duration": 0,
+    "input": {
+      "slot_id": "SLOT-C"
+    },
+    "output": {
+      "result": "APT-P001-8087",
+      "succeeded": true
+    },
+    "metadata": "",
+    "tags": [
+      "tool-ok"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.identity_verified": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.appointment_booked": "-"
+  },
+  {
+    "id": "01a0be19-c46d-7f3e-a6d5-50d1f39dfd11",
+    "name": "get_available_slots",
+    "type": "tool",
+    "start_time": "2026-09-20T09:14:48.529012Z",
+    "end_time": "2026-09-20T09:14:48.529012Z",
+    "duration": 0,
+    "input": {},
+    "output": {
+      "result": "3 slot(s)",
+      "succeeded": true
+    },
+    "metadata": "",
+    "tags": [
+      "tool-ok"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.identity_verified": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.appointment_booked": "-"
+  },
+  {
+    "id": "01a0be19-c46c-75e7-9e0a-0f5280a48f35",
+    "name": "verify_patient_identity",
+    "type": "tool",
+    "start_time": "2026-09-20T09:14:14.749925Z",
+    "end_time": "2026-09-20T09:14:14.749925Z",
+    "duration": 0,
+    "input": {
+      "stated_identifier": "twenty second of March nineteen eighty eight"
+    },
+    "output": {
+      "result": "verified",
+      "succeeded": true
+    },
+    "metadata": "",
+    "tags": [
+      "tool-ok"
+    ],
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.identity_verified": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.appointment_booked": "-"
+  },
+  {
+    "id": "01a0be19-c46b-748a-a104-8564f4e37dd9",
+    "name": "conversation",
+    "type": "general",
+    "start_time": "2026-09-20T09:13:16.742629Z",
+    "end_time": "2026-09-20T09:15:47.206844Z",
+    "duration": 150464.215,
+    "input": {
+      "transcript": [
+        {
+          "role": "assistant",
+          "text": "This is an automated call from Lakeside Family Clinic. May I speak with Meera, please?",
+          "at": "2026-09-20T09:13:16.742629+00:00"
+        },
+        {
+          "role": "user",
+          "text": "This call will be recorded.",
+          "at": "2026-09-20T09:13:40.478728+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Hi. Can you please repeat, um, your first statement?",
+          "at": "2026-09-20T09:13:44.150342+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "This is an automated call from Lakeside Family Clinic. May I speak with Meera, please?",
+          "at": "2026-09-20T09:13:44.156817+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Yes. Speaking.",
+          "at": "2026-09-20T09:13:55.308772+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Thank you, Meera. Before I continue, I need to confirm I am speaking with the right person. Could you please tell me your date of birth, including the year?",
+          "at": "2026-09-20T09:13:55.314857+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Yes. My date of birth is",
+          "at": "2026-09-20T09:14:12.771652+00:00"
+        },
+        {
+          "role": "user",
+          "text": "twenty second of March nineteen eighty eight.",
+          "at": "2026-09-20T09:14:13.568379+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Hello Meera, I am calling from Lakeside Family Clinic with your recent test results. Your HbA1c is seven point eight percent, with a typical range of four point zero to five point six. The status is above the target range. Your fasting glucose is one hundred forty-two milligrams per deciliter, with a typical range of seventy to ninety-nine. The status is above the target range as well. I can help you book an appointment with a doctor to discuss these results if you would like.",
+          "at": "2026-09-20T09:14:14.769196+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Yes, please.",
+          "at": "2026-09-20T09:14:47.556017+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "I have available times on Tuesday the twenty-second of September at ten in the morning with Doctor Rao, Wednesday the twenty-third of September at three thirty in the afternoon with Doctor Rao, and Friday the twenty-fifth of September at nine fifteen in the morning with Doctor Menon. Which of these would you prefer?",
+          "at": "2026-09-20T09:14:48.547649+00:00"
+        },
+        {
+          "role": "user",
+          "text": "I prefer the Friday one.",
+          "at": "2026-09-20T09:15:10.061561+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Just to confirm, that's Friday the twenty-fifth of September at nine fifteen in the morning with Doctor Menon?",
+          "at": "2026-09-20T09:15:10.083363+00:00"
+        },
+        {
+          "role": "user",
+          "text": "Yes. That's right.",
+          "at": "2026-09-20T09:15:21.055633+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Your appointment is booked for Friday the twenty-fifth of September at nine fifteen in the morning with Doctor Menon. The confirmation code is A P T dash P zero zero one dash eight zero eight seven. Please make a note of this. Is there anything else I can assist you with?",
+          "at": "2026-09-20T09:15:22.128986+00:00"
+        },
+        {
+          "role": "user",
+          "text": "No. That's all. Thank you.",
+          "at": "2026-09-20T09:15:42.500150+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Thank you, Meera. Goodbye, and take care.",
+          "at": "2026-09-20T09:15:42.507643+00:00"
+        },
+        {
+          "role": "assistant",
+          "text": "Goodbye, Meera, and have a wonderful day.",
+          "at": "2026-09-20T09:15:47.206844+00:00"
+        }
+      ]
+    },
+    "output": {
+      "final_agent_message": "Goodbye, Meera, and have a wonderful day."
+    },
+    "metadata": {
+      "turn_count": 18
+    },
+    "tags": "",
+    "error_info": "",
+    "usage": "",
+    "provider": "",
+    "model": "",
+    "total_estimated_cost": "",
+    "thread_id": "",
+    "feedback_scores.identity_verified": "-",
+    "feedback_scores.no_premature_disclosure": "-",
+    "feedback_scores.agent_gave_medical_advice": "-",
+    "feedback_scores.appointment_booked": "-"
+  }
+]
