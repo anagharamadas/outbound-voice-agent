@@ -18,6 +18,7 @@ Two modes:
 
       ./venv/bin/python demo_view.py --last          # most recent call
       ./venv/bin/python demo_view.py --watch         # wait for the next one
+      ./venv/bin/python demo_view.py AJ_JzRRYmSEFUey # one specific call
 
 Reads only. It never places a call, never writes, never touches Opik.
 """
@@ -250,6 +251,22 @@ def main() -> int:
                     render(f)
                     return 0
             time.sleep(0.5)
+    # An explicit record wins over --last. Needed to re-render an OLDER call --
+    # re-recording one segment of a demo should not mean moving files around.
+    named = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if named:
+        path = Path(named[0])
+        if not path.exists():
+            path = RECORDS / named[0]
+        if not path.exists() and not named[0].endswith(".json"):
+            path = RECORDS / f"{named[0]}.json"
+        if not path.exists():
+            print(f"\n  {YEL}No record matching {named[0]!r}.{R}")
+            print(f"  {GREY}Available: {', '.join(sorted(f.stem for f in RECORDS.glob('*.json')))}{R}\n")
+            return 1
+        render(path)
+        return 0
+
     path = latest()
     if path is None:
         print(f"\n  {YEL}No call records yet.{R} Make a call first.\n")
@@ -263,7 +280,9 @@ if __name__ == "__main__":
     # inferred it from the terminal and hung forever whenever stdin was a pipe
     # with nothing coming -- which is exactly how it would be run by accident
     # mid-demo.
-    if "--last" in sys.argv or "--watch" in sys.argv:
+    if "--last" in sys.argv or "--watch" in sys.argv or any(
+        not a.startswith("--") for a in sys.argv[1:]
+    ):
         raise SystemExit(main())
     if sys.stdin.isatty():
         print(__doc__)
