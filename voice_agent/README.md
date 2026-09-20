@@ -12,6 +12,11 @@ phone call and locally in a console, with the same code.
 
 ---
 
+**Companion documents:** [DECISIONS.md](DECISIONS.md) — the decision log, design
+and implementation, each with the evidence that drove it.
+[RISKS.md](RISKS.md) — the risk register, including four issues that occurred
+during the build and how they were caught.
+
 ## Contents
 
 - [The idea in one picture](#the-idea-in-one-picture)
@@ -398,6 +403,10 @@ here and named below.
 
 ## Design decisions
 
+The full log — including the twelve implementation decisions forced during the
+build, each citing the evidence that changed it — is in
+**[DECISIONS.md](DECISIONS.md)**. Summary:
+
 | # | Decision | Why |
 |---|---|---|
 | D1 | Cascaded STT → LLM → TTS, not speech-to-speech | Discrete, inspectable transcript and tool calls — which the observability and eval phases depend on. |
@@ -425,6 +434,10 @@ Two consequences worth calling out, because they look like bugs and are not:
 ---
 
 ## Known gaps
+
+Assessed with impact, likelihood and residual risk in
+**[RISKS.md](RISKS.md)**. The table below is the scope view; the register is the
+safety view, and R-08 (PHI to a third party) is marked as would-block-production.
 
 Deliberately out of scope. Listed with the approach that would be taken, because
 hiding them would be worse than not building them.
