@@ -152,7 +152,10 @@ def render(path: Path) -> None:
 
     if not a:
         print()
-        print(f"  {YEL}No analysis on this record{R} (ANALYSIS_ENABLED=false?)")
+        # Do not guess at the cause. The record simply has none.
+        print(f"  {YEL}No analysis attached to this record.{R}")
+        print(f"  {GREY}Either ANALYSIS_ENABLED=false, or the analysis had not finished")
+        print(f"  when this was rendered — re-run with --last to see it.{R}")
         print()
         return
 
@@ -202,6 +205,40 @@ def render(path: Path) -> None:
     print()
 
 
+# finish_call writes the record IMMEDIATELY, so a complete record survives
+# whatever follows, and only then analyses the transcript and rewrites the file.
+# So the first version of the file has no analysis in it. A fixed sleep is the
+# wrong tool -- the analysis takes 2-6s plus two flushes, and a demo that
+# renders too early reports "no analysis" for a call that analysed perfectly
+# well. Poll for the real thing instead.
+ANALYSIS_WAIT_SECONDS = 30
+
+
+def wait_for_analysis(path: Path) -> bool:
+    """Block until the record has an analysis, or until it clearly will not.
+
+    Returns True if one arrived. Prints a progress line so a viewer watching a
+    recording understands the pause is the system working rather than a hang.
+    """
+    deadline = time.time() + ANALYSIS_WAIT_SECONDS
+    shown = False
+    while time.time() < deadline:
+        try:
+            if (json.loads(path.read_text(encoding="utf-8")) or {}).get("analysis"):
+                if shown:
+                    print(f"\r  {GRN}analysis ready{R}{' ' * 40}")
+                return True
+        except (json.JSONDecodeError, OSError):
+            pass                      # mid-rewrite; try again
+        if not shown:
+            print(f"  {GREY}call ended — running post-call analysis…{R}", end="", flush=True)
+            shown = True
+        time.sleep(0.4)
+    if shown:
+        print(f"\r  {YEL}no analysis after {ANALYSIS_WAIT_SECONDS}s{R}{' ' * 30}")
+    return False
+
+
 def main() -> int:
     if "--watch" in sys.argv:
         before = {f: f.stat().st_mtime for f in RECORDS.glob("*.json")} if RECORDS.exists() else {}
@@ -209,7 +246,7 @@ def main() -> int:
         while True:
             for f in RECORDS.glob("*.json"):
                 if f not in before or f.stat().st_mtime > before.get(f, 0):
-                    time.sleep(1.5)          # let the analysis rewrite land
+                    wait_for_analysis(f)
                     render(f)
                     return 0
             time.sleep(0.5)
