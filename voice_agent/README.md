@@ -28,6 +28,37 @@ appointment booked) and [`clip2_opik_trace.json`](../clip2_opik_trace.json)
 (identity **not** verified — note that no biomarker appears anywhere in that
 transcript, and there is no `book_appointment` span).
 
+> **Note on the demo recording — the post-call analysis.** At around 5:00 the
+> main recording shows `No analysis on this record` where the post-call analysis
+> should be. That message is wrong, and the two short addenda below show the
+> same two calls rendering correctly:
+> [`addendum_clip1_post_call_analysis.mov`](../addendum_clip1_post_call_analysis.mov)
+> (21s) and
+> [`addendum_clip2_post_call_analysis.mov`](../addendum_clip2_post_call_analysis.mov)
+> (12s).
+>
+> **What happened.** `finish_call` writes the call record to disk *immediately*,
+> so a complete record survives whatever follows, and only then runs the
+> analysis and rewrites the file — an ordering chosen because losing the record
+> costs the call, while losing the analysis costs a summary. The presenter
+> script I was using to display the record on screen waited a fixed 1.5 seconds
+> after the call ended before rendering it. The analysis takes 2–6 seconds plus
+> two flushes, so it rendered the *first* write, before the analysis existed —
+> and then guessed at a cause it had no evidence for.
+>
+> **The agent was never at fault.** Both calls analysed correctly within seconds
+> and the results were on disk the whole time; they are in
+> [`clip1_opik_trace.json`](../clip1_opik_trace.json) and
+> [`clip2_opik_trace.json`](../clip2_opik_trace.json), which were exported from
+> Opik before this was noticed. The defect was in `demo_view.py` — a presentation
+> tool, not part of the system.
+>
+> **Fixed in `e324eeb`**: it now polls for the analysis rather than assuming when
+> it lands, and a record that genuinely has none says so without inventing a
+> reason. The addenda are re-renders of the *same saved records* — no calls were
+> re-placed. They are included rather than edited into the original because the
+> bug and its fix are more informative than a seamless video.
+
 ## Contents
 
 - [The idea in one picture](#the-idea-in-one-picture)
