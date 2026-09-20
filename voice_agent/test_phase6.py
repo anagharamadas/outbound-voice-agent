@@ -99,10 +99,22 @@ class FakeClient:
 
 
 def load_record() -> CallRecord | None:
+    """The newest record that actually has a conversation in it.
+
+    An empty record is a real thing -- a call that was answered and dropped
+    before anyone spoke produces one -- but it exercises none of the structure
+    under test here. Section 11 covers the empty case explicitly instead of
+    letting it silently become the fixture for everything.
+    """
     files = glob.glob("call_records/*.json")
     if not files:
         return None
-    return CallRecord.read_json(Path(max(files, key=os.path.getmtime)))
+    records = sorted(
+        (CallRecord.read_json(Path(f)) for f in files),
+        key=lambda r: r.started_at,
+    )
+    with_content = [r for r in records if r.transcript]
+    return (with_content or records)[-1]
 
 
 def run(record: CallRecord) -> None:
@@ -230,7 +242,19 @@ def run(record: CallRecord) -> None:
         else:
             os.environ["OPIK_ENABLED"] = saved
 
-    print("\n10. The agent does not import Opik")
+    print("\n10. An EMPTY call exports without crashing")
+    import dataclasses
+    empty = dataclasses.replace(record, transcript=(), tool_invocations=())
+    c = FakeClient()
+    s_empty = OpikSink(client=c, project_name="t")
+    r = s_empty.on_call_end(empty)
+    check("export succeeds", r.delivered, r.detail)
+    check("one trace still created", len(c.traces) == 1)
+    check("no conversation span, rather than an empty one",
+          [sp.kw.get("name") for sp in c.traces[0].spans] == [],
+          "a span with no turns would be noise in the UI")
+
+    print("\n11. The agent does not import Opik")
     import subprocess
     out = subprocess.run(
         ["grep", "-rn", "opik", "src/agent.py", "src/events.py", "src/analysis.py",

@@ -21,6 +21,7 @@ Phase 2 task 1), not against GitHub main:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Callable
@@ -88,6 +89,19 @@ logger = logging.getLogger("healthcare-agent")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PATIENTS_FILE = PROJECT_ROOT / "data" / "patients.json"
+
+# Loaded at IMPORT time, not per job. `python src/agent.py start` registers the
+# worker with LiveKit Cloud before any job exists, and that registration reads
+# LIVEKIT_URL / LIVEKIT_API_KEY straight from the environment -- so loading .env
+# inside the per-job path is too late and the worker dies with
+# "ws_url is required, or set LIVEKIT_URL environment variable".
+#
+# Console mode hid this: it runs locally and never registers, so it needed
+# nothing from .env until the job itself started.
+#
+# override=False, so anything already exported -- a test forcing OPIK_ENABLED
+# off, a one-off OPIK_WORKSPACE on the command line -- still wins over the file.
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 # Where the finished CallRecord is dumped for inspection. This is NOT the
 # observability sink -- it is written whatever sink is configured, which is how
@@ -215,6 +229,12 @@ def analysis_enabled() -> bool:
 # LLM: chosen for instruction-following latency on a voice turn. The gate does
 #      not depend on the model behaving -- it is enforced in code -- so this is
 #      a quality choice, not a safety one.
+# Named so the dispatcher can target it explicitly. An agent with a name is
+# dispatched on request rather than picking up whatever room appears, which is
+# what an outbound campaign wants: dispatch.py decides who is called and when,
+# and a stray room never triggers a call to a patient.
+AGENT_NAME = "healthcare-outbound"
+
 STT_MODEL = "deepgram/nova-3-medical"
 LLM_MODEL = "openai/gpt-4.1-mini"
 TTS_MODEL = "inworld/inworld-tts-2"
@@ -543,26 +563,49 @@ def build_session() -> AgentSession:
     )
 
 
-def load_target_patient() -> Patient:
+def patient_id_from_metadata(metadata: str | None) -> str | None:
+    """The patient id carried on the job, if this session was dispatched.
+
+    Phase 8's dispatcher puts `{"patient_id": "P001"}` in the dispatch metadata.
+    A malformed or absent value returns None rather than raising: the caller
+    falls back to PATIENT_ID, and a session that cannot identify its patient
+    should fail in `get_patient` with a message naming the id, not here with a
+    JSON error.
+    """
+    if not metadata:
+        return None
+    try:
+        parsed = json.loads(metadata)
+    except (TypeError, ValueError):
+        logger.warning("job metadata is not valid JSON; falling back to PATIENT_ID")
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = parsed.get("patient_id")
+    return str(value).strip() or None if value else None
+
+
+def load_target_patient(metadata: str | None = None) -> Patient:
     """Which patient this session is calling.
 
-    In console mode there is no dispatch metadata, so PATIENT_ID selects the
-    record. Phase 8 replaces this with data carried on the job.
+    Dispatch metadata wins when present -- that is the real path, and it is how
+    one worker serves calls to different patients without being restarted.
+    PATIENT_ID remains the console fallback, because a console session is not
+    dispatched and carries no metadata.
 
-    .env is loaded here for the reason dispatch.py documents at its own
-    `load_config()` call: patients.json may reference ${DESTINATION_PHONE_NUMBER},
-    and that has to be in the environment before the record is parsed. The agent
-    runs in a SEPARATE worker process that inherits nothing from the dispatcher,
-    so the dispatcher having loaded .env does not help here. Without this,
-    console mode crashes on P001 -- the default patient -- before reaching any
-    agent code.
+    .env is loaded at module import (see the note beside PATIENTS_FILE) rather
+    than here, because the worker needs LIVEKIT_URL before any job exists. It is
+    repeated here only to cover the case where this function is called from a
+    process that imported the module some other way -- load_dotenv is idempotent
+    and does not override what is already set.
 
-    `load_dotenv` rather than `load_config`: a console run never dials, so
-    demanding a trunk id and a Twilio number would reject a session that has no
-    use for either.
+    patients.json may reference ${DESTINATION_PHONE_NUMBER}, so the environment
+    has to be populated before the record is parsed. `load_dotenv` rather than
+    `load_config`: a console run never dials, so demanding a trunk id and a
+    Twilio number would reject a session that has no use for either.
     """
-    load_dotenv(PROJECT_ROOT / ".env")
-    patient_id = (os.getenv("PATIENT_ID") or "P001").strip()
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    patient_id = patient_id_from_metadata(metadata) or (os.getenv("PATIENT_ID") or "P001").strip()
     return get_patient(PATIENTS_FILE, patient_id)
 
 
@@ -747,9 +790,9 @@ async def finish_call(
         )
 
 
-@server.rtc_session()
+@server.rtc_session(agent_name=AGENT_NAME)
 async def entrypoint(ctx: JobContext) -> None:
-    patient = load_target_patient()
+    patient = load_target_patient(getattr(ctx.job, "metadata", None))
     # Log the id only. The name is patient data and the rest is worse.
     logger.info("starting session for patient %s", patient.patient_id)
 

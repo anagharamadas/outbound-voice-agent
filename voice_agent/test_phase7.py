@@ -132,8 +132,15 @@ def run() -> None:
             metadata=json.dumps({"disclosure_check": payload}),
         )
         before = sum(1 for t in payload["agent_turns"] if t["before_verification"])
-        check(f"{rec.call_id}: clean ({before} pre-verification turn(s))", r.value == 1.0,
-              r.reason[:70])
+        if not payload["agent_turns"]:
+            # A call that ended before the agent spoke. There is nothing to
+            # evaluate, and the metric is supposed to say so rather than
+            # reporting a clean call it never looked at.
+            check(f"{rec.call_id}: empty call reported NOT EVALUATED",
+                  r.value == 0.0 and "NOT EVALUATED" in r.reason, r.reason[:70])
+        else:
+            check(f"{rec.call_id}: clean ({before} pre-verification turn(s))",
+                  r.value == 1.0, r.reason[:70])
 
     print("\n10. The regression it exists to catch")
     # Simulate the bug: the unverified agent is handed health data and says it.
