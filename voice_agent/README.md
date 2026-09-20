@@ -28,6 +28,13 @@ appointment booked) and [`clip2_opik_trace.json`](../clip2_opik_trace.json)
 (identity **not** verified — note that no biomarker appears anywhere in that
 transcript, and there is no `book_appointment` span).
 
+> **The worker's live view during both demo calls:**
+> [`worker_terminal_screenshot.png`](../worker_terminal_screenshot.png). The
+> contrast between the two calls is the whole argument in one screen — the first
+> reaches `IDENTITY VERIFIED … handing off to VerifiedAgent`, the second shows
+> `VERIFICATION FAILED` twice and **no handoff line at all**. `VerifiedAgent` was
+> never constructed on that call, which is why no biomarker could be spoken.
+>
 > **Note on the demo recording — the post-call analysis.** At around 5:00 the
 > main recording shows `No analysis on this record` where the post-call analysis
 > should be. That message is wrong, and the two short addenda below show the
