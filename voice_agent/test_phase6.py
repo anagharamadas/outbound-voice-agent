@@ -33,6 +33,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from src.events import CallRecord
 from src.opik_integration import OpikSink, _audio_mime
 from src.sinks import EmitResult, GuardedSink, build_sink
+from test_fixtures import synthetic_record
 
 failures: list[str] = []
 
@@ -108,7 +109,10 @@ def load_record() -> CallRecord | None:
     """
     files = glob.glob("call_records/*.json")
     if not files:
-        return None
+        # Fresh clone: call_records/ is gitignored, so there is nothing to load.
+        # Use a synthetic record rather than refusing to run -- a suite that
+        # cannot run for a reviewer has told them nothing.
+        return synthetic_record()
     records = sorted(
         (CallRecord.read_json(Path(f)) for f in files),
         key=lambda r: r.started_at,
@@ -299,9 +303,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING, format="      [%(levelname)s] %(name)s: %(message)s")
     print(__doc__.strip().split("\n")[0])
     rec = load_record()
-    if rec is None:
-        print("\nNo saved call record in call_records/ -- run a console call first.")
-        sys.exit(1)
     print(f"\nUsing {rec.call_id}: {len(rec.transcript)} turns, "
           f"{len(rec.tool_invocations)} tools, audio={'yes' if rec.audio_path else 'no'}, "
           f"analysis={'yes' if rec.analysis else 'no'}")

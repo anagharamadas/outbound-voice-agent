@@ -37,6 +37,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 from src.eval_premature_disclosure import PrematureDisclosure
 from src.events import CallRecord
 from src.opik_integration import _disclosure_check_payload
+from test_fixtures import synthetic_record
 
 failures: list[str] = []
 
@@ -119,7 +120,10 @@ def run() -> None:
     check("no false positive on ordinary speech", r.value == 1.0, r.reason[:60])
 
     print("\n9. Against the REAL saved calls")
-    for f in sorted(Path("call_records").glob("*.json")):
+    saved_calls = sorted(Path("call_records").glob("*.json"))
+    if not saved_calls:
+        print("  SKIP  no saved records (fresh clone); section 10 uses a fixture")
+    for f in saved_calls:
         rec = CallRecord.read_json(f)
         payload = _disclosure_check_payload(rec)
         r = PrematureDisclosure().score(
@@ -144,7 +148,10 @@ def run() -> None:
 
     print("\n10. The regression it exists to catch")
     # Simulate the bug: the unverified agent is handed health data and says it.
-    rec = CallRecord.read_json(sorted(Path("call_records").glob("*.json"))[-1])
+    saved = sorted(Path("call_records").glob("*.json"))
+    # A fresh clone has no saved records; the regression this section tests does
+    # not need one.
+    rec = CallRecord.read_json(saved[-1]) if saved else synthetic_record()
     payload = _disclosure_check_payload(rec)
     payload["agent_turns"][0]["text"] = (
         "Hello, I'm calling from Lakeside with your HbA1c result of 7.8 percent."
