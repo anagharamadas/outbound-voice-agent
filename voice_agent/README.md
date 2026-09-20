@@ -12,7 +12,10 @@ phone call and locally in a console, with the same code.
 
 ---
 
-**Companion documents:** [DECISIONS.md](DECISIONS.md) — the decision log, design
+**Companion documents:** [ARCHITECTURE.md](ARCHITECTURE.md) — the end-to-end
+design: C4 context/container/component views, the call sequence, the
+verification gate as a state machine, trust boundaries and failure modes.
+[DECISIONS.md](DECISIONS.md) — the decision log, design
 and implementation, each with the evidence that drove it.
 [RISKS.md](RISKS.md) — the risk register, including four issues that occurred
 during the build and how they were caught.
