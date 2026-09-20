@@ -461,7 +461,7 @@ hiding them would be worse than not building them.
 | **Any database, queue, cache or web server** | State is a JSON file and process memory. Anything multi-user needs real storage. |
 | **Multi-agent orchestration** | Two agent classes and one handoff is the whole topology, and that is deliberate. |
 | **Phone-call audio is a reference, not a file** | Needs a storage bucket. See [call recording](#call-recording). |
-| **A stall at session start** | Importing `opik` lazily — which is what makes the module deletable — blocks the event loop ~888ms on the first call. Fix is a prewarm hook that imports it at worker startup without coupling the agent to it. |
+
 
 ---
 

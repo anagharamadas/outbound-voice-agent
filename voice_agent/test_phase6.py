@@ -272,6 +272,57 @@ def run(record: CallRecord) -> None:
           [sp.kw.get("name") for sp in c.traces[0].spans] == [],
           "a span with no turns would be noise in the UI")
 
+    print("\n10b. Prewarm is an optimisation, never a dependency")
+    import importlib
+    import subprocess as _sp
+    from src import sinks as _sinks
+
+    saved_env = os.environ.get("OPIK_ENABLED")
+    try:
+        os.environ["OPIK_ENABLED"] = "false"
+        before = dict(sys.modules)
+        _sinks.prewarm()
+        check("disabled -> prewarm imports nothing",
+              set(sys.modules) - set(before) == set() or "opik" in before,
+              "no point loading a sink that will not be used")
+
+        # The claim under test: if the module is gone, prewarm must be a no-op,
+        # not an exception. Simulated by making the import fail.
+        os.environ["OPIK_ENABLED"] = "true"
+        real = sys.modules.pop("src.opik_integration", None)
+        sys.modules["src.opik_integration"] = None   # forces ImportError
+        try:
+            _sinks.prewarm()
+            check("a broken/deleted sink module does not raise", True)
+        except Exception as exc:
+            check("a broken/deleted sink module does not raise", False, repr(exc))
+        finally:
+            if real is not None:
+                sys.modules["src.opik_integration"] = real
+            else:
+                sys.modules.pop("src.opik_integration", None)
+
+        # And the agent must still start with no Opik installed at all.
+        probe = _sp.run(
+            [sys.executable, "-c",
+             "import sys, os;"
+             "sys.path.insert(0,'.');"
+             "os.environ['OPIK_ENABLED']='true';"
+             # make `import opik` fail, as a deleted package would
+             "sys.modules['opik']=None;"
+             "from src.sinks import prewarm, build_sink;"
+             "prewarm();"
+             "print(build_sink().name)"],
+            capture_output=True, text=True, cwd=".")
+        check("with opik unimportable, the agent still builds a sink",
+              probe.returncode == 0 and "noop" in probe.stdout,
+              (probe.stdout + probe.stderr).strip().splitlines()[-1][:80] if (probe.stdout or probe.stderr) else "")
+    finally:
+        if saved_env is None:
+            os.environ.pop("OPIK_ENABLED", None)
+        else:
+            os.environ["OPIK_ENABLED"] = saved_env
+
     print("\n11. The agent does not import Opik")
     import subprocess
     out = subprocess.run(
@@ -280,10 +331,22 @@ def run(record: CallRecord) -> None:
         capture_output=True, text=True).stdout
     check("no Opik reference in any agent module", out.strip() == "",
           out.strip()[:120] or "clean")
-    sinks_src = Path("src/sinks.py").read_text()
-    top = sinks_src.split("def build_sink")[0]
-    check("sinks.py has no module-level Opik import", "opik_integration" not in top,
-          "the import is inside build_sink, so a deleted module degrades gracefully")
+    # Asserted on the AST, not on text position. The property is "nothing at
+    # MODULE scope imports the Opik adapter" -- which function holds the import
+    # is irrelevant, and a text search anchored to one function name breaks the
+    # moment another function is added above it.
+    import ast as _ast
+    module_body = _ast.parse(Path("src/sinks.py").read_text()).body
+    top_level_imports = {
+        _ast.unparse(n) for n in module_body
+        if isinstance(n, (_ast.Import, _ast.ImportFrom))
+    }
+    check("sinks.py has no module-level Opik import",
+          not any("opik" in i.lower() for i in top_level_imports),
+          "every Opik import is function-scoped, so a deleted module degrades gracefully")
+    check("sinks.py has no module-level import of the adapter at all",
+          not any("opik_integration" in i for i in top_level_imports),
+          str(sorted(top_level_imports))[:90])
 
 
 def run_live(record: CallRecord) -> None:

@@ -322,7 +322,7 @@ code yields a fetchable file. See [R-08](RISKS.md#r-08).
 ---
 
 ### I11 — Accept an ~888ms import stall rather than couple the agent to Opik
-**Status:** Accepted, with known cost
+**Status:** Superseded by [I13](#i13--prewarm-the-sink-so-the-stall-is-paid-while-the-process-is-idle)
 **Evidence:** framework warning on a real call — the lazy `import opik` inside
 `build_sink()` pulls in `sentry_sdk` and blocks the loop for 888ms at session
 start.
@@ -331,9 +331,13 @@ The lazy import is precisely what makes D5's "delete the file and it still runs"
 true. Hoisting it to module scope would remove the stall and break the claim.
 
 **Cost:** a stall at the moment the greeting should go out — the one issue in
-this build a patient could plausibly notice. **Open.** The fix is a prewarm hook
-that imports at worker startup without coupling the agent to Opik. See
-[R-09](RISKS.md#r-09).
+this build a patient could plausibly notice.
+
+**Superseded.** The premise was that the stall and the modularity claim were in
+tension. They are not: a third option exists that keeps both. See
+[I13](#i13--prewarm-the-sink-so-the-stall-is-paid-while-the-process-is-idle).
+Kept rather than rewritten, because the reasoning was sound given what was known
+and the record of it is the point.
 
 ---
 
@@ -349,3 +353,31 @@ Test suites force `OPIK_ENABLED=false` and `OPIK_TRACK_DISABLE=true` rather than
 defaulting them, because `.env` is loaded by the code under test. Verified by
 snapshotting the project before and after a full suite run. See
 [R-11](RISKS.md#r-11).
+
+---
+
+### I13 — Prewarm the sink so the stall is paid while the process is idle
+**Status:** Accepted
+**Supersedes:** [I11](#i11--accept-an-888ms-import-stall-rather-than-couple-the-agent-to-opik)
+**Evidence:** measured `build_sink()` cold at **1001.7ms** and warm at
+**14.5ms**; LiveKit spends one job process per call, so a fresh process paid it
+on *every* call rather than once.
+
+I11 framed this as a choice between a fast call opening and D5's "delete the
+file and it still runs". That framing was wrong — it assumed the import had to
+move to module scope. `AgentServer(setup_fnc=...)` runs a function when a job
+process starts, *before* a call is assigned to it, which is idle time nobody is
+waiting on.
+
+`sinks.prewarm()` imports the adapter there. The lazy import inside
+`build_sink()` is unchanged, so the modularity claim is untouched: prewarm is a
+pure optimisation that may fail freely, and a deleted module simply means it
+does nothing.
+
+`agent.py` still does not name Opik — it asks the seam to warm whatever it
+needs, and the seam decides what that means.
+
+**Guarded by assertion, not by care:** `test_phase6.py` section 10b proves a
+deleted or unimportable sink module leaves the agent working, and section 11
+asserts on the **AST** that nothing at module scope imports Opik — replacing a
+text search that had silently stopped testing the real property.

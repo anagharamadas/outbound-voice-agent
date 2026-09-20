@@ -485,6 +485,15 @@ the process *mid-flush*, losing exactly the telemetry the shutdown exists to
 deliver. Every step remains independently capped, so the ceiling rises without
 removing a guard ([I4](DECISIONS.md#i4--the-shutdown-budget-is-raised-from-10s-to-30s)).
 
+**Slow imports are paid before the call, not during it.** `AgentServer` takes a
+`setup_fnc` that runs when a job process starts, before a call is assigned to
+it. `sinks.prewarm()` loads the observability adapter there — measured
+**1001.7ms cold vs 14.5ms warm** at session start. LiveKit spends one job
+process per call, so without it a fresh process paid that stall on *every* call,
+at the moment the opening line should be going out. The lazy import inside
+`build_sink()` is unchanged, so prewarm stays a pure optimisation that may fail
+freely ([I13](DECISIONS.md#i13--prewarm-the-sink-so-the-stall-is-paid-while-the-process-is-idle)).
+
 **Every sink call runs via `asyncio.to_thread`.** Opik's `flush()` blocks until
 delivery and held the event loop for 1116ms on a real call. The offload is at
 the *seam*, so every future sink inherits it rather than each having to remember

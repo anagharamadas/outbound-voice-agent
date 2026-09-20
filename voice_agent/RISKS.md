@@ -45,7 +45,7 @@ with no evidence is an intention, not a control.
 | [R-06](#r-06) | Misheard name or appointment time on narrowband audio | Medium | Medium | Mitigated, residual accepted |
 | [R-07](#r-07) | Voicemail receives the call | Medium | High | Open — accepted |
 | [R-08](#r-08) | PHI sent to a third-party SaaS | Critical | Certain | Open — would block production |
-| [R-09](#r-09) | Event-loop stall degrades live audio | Medium | Medium | Partially mitigated |
+| [R-09](#r-09) | Event-loop stall degrades live audio | Medium | Medium | Mitigated |
 | [R-10](#r-10) | Observability fails silently | Medium | Low | Mitigated |
 | [R-11](#r-11) | Test runs write to production telemetry | Medium | — | Mitigated (occurred twice) |
 | [R-12](#r-12) | Repeated dialling triggers carrier blocking | Medium | Low | Mitigated |
@@ -252,7 +252,7 @@ deliverable at this stage.
 ### R-09
 **Synchronous work stalls the event loop and degrades live audio**
 
-**Impact:** Medium · **Likelihood:** Medium · **Status:** Partially mitigated
+**Impact:** Medium · **Likelihood:** Medium · **Status:** Mitigated
 
 **Mitigated.** Opik's `flush()` blocks until delivery and held the agent's loop
 for **1116ms**, caught by the framework's own detector. All sink calls now run
@@ -260,14 +260,24 @@ via `asyncio.to_thread`, at the seam rather than inside the Opik sink, so every
 future sink inherits the protection ([I5](DECISIONS.md#i5--sink-calls-run-off-the-event-loop)).
 Regression-tested with a heartbeat beside a deliberately slow sink.
 
-**Open.** The lazy `import opik` inside `build_sink()` stalls the loop **~888ms
-at session start** — when the greeting should be going out. This is the only
-issue in the build a patient could plausibly notice.
+**Also mitigated.** The lazy `import opik` inside `build_sink()` stalled the
+loop **~1000ms at session start** — when the greeting should be going out, on
+*every* call, because LiveKit spends one job process per call and a fresh
+process has never imported it.
 
-**Why it is still open:** the lazy import is exactly what makes D5's "delete the
-file and it still runs" true. Hoisting it removes the stall and breaks the
-claim. The fix is a prewarm hook importing at worker startup without coupling
-the agent to Opik ([I11](DECISIONS.md#i11--accept-an-888ms-import-stall-rather-than-couple-the-agent-to-opik)).
+Moved to `setup_fnc`, which runs while a pre-warmed process sits idle with
+nobody on the phone. Measured: **1001.7ms → 14.5ms** at session start, with
+758ms now paid during warm-up. The lazy import is unchanged and still
+function-scoped, so D5's "delete the file and it still runs" is untouched — the
+prewarm is a pure optimisation that may fail freely.
+
+**Evidence:** `src/sinks.py::prewarm`; `test_phase6.py` section 10b asserts that
+a deleted or unimportable sink module leaves the prewarm a no-op and the agent
+still building a sink, and section 11 asserts on the AST that nothing at module
+scope imports Opik.
+
+**Residual:** none known. The remaining loop-blocking risk is a future sink that
+blocks in a way `asyncio.to_thread` does not cover.
 
 ---
 

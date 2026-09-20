@@ -50,6 +50,7 @@ try:
     from .patient import Health, Identity, Patient, get_patient
     from .prompts import CLINIC_NAME, unverified_instructions, verified_instructions
     from .sinks import ObservabilitySink, build_sink
+    from .sinks import prewarm as prewarm_observability
     from .verification import (
         ATTEMPTS_EXHAUSTED,
         COULD_NOT_UNDERSTAND,
@@ -74,6 +75,7 @@ except ImportError:
     from src.patient import Health, Identity, Patient, get_patient
     from src.prompts import CLINIC_NAME, unverified_instructions, verified_instructions
     from src.sinks import ObservabilitySink, build_sink
+    from src.sinks import prewarm as prewarm_observability
     from src.verification import (
         ATTEMPTS_EXHAUSTED,
         COULD_NOT_UNDERSTAND,
@@ -649,7 +651,23 @@ def load_target_patient(metadata: str | None = None) -> Patient:
 # removing any of the individual guards.
 SHUTDOWN_TIMEOUT_SECONDS = 30.0
 
-server = AgentServer(shutdown_process_timeout=SHUTDOWN_TIMEOUT_SECONDS)
+def prewarm(proc: Any) -> None:
+    """Runs when a job process starts, before any call is assigned to it.
+
+    LiveKit spends one process per call, so anything loaded lazily during a call
+    is loaded again for the next one. Slow imports belong here, where the
+    process is idle and nobody is on the phone.
+
+    Note what this does NOT do: it does not name Opik. `agent.py` still has no
+    idea which sink is configured -- it asks the seam to warm whatever it needs.
+    """
+    prewarm_observability()
+
+
+server = AgentServer(
+    setup_fnc=prewarm,
+    shutdown_process_timeout=SHUTDOWN_TIMEOUT_SECONDS,
+)
 
 
 def attach_recorder(session: AgentSession, recorder: CallRecorder) -> None:

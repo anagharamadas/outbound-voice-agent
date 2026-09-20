@@ -163,6 +163,54 @@ class GuardedSink:
         return result
 
 
+def opik_enabled() -> bool:
+    """One place decides. Both `prewarm` and `build_sink` ask it."""
+    return (os.getenv("OPIK_ENABLED") or "").strip().lower() in ("1", "true", "yes")
+
+
+def prewarm() -> None:
+    """Load whatever the configured sink needs, BEFORE any call arrives.
+
+    Pure optimisation. It changes nothing about what the agent does and may fail
+    freely -- `build_sink()` does its own import later and does not care whether
+    this ran.
+
+    WHY IT EXISTS. Importing `opik` takes ~888ms: it pulls in sentry_sdk and a
+    good deal else. That import otherwise happens inside `build_sink()` at
+    session start, on the agent's event loop, at the exact moment the opening
+    line should be going out -- measured on a real call, and flagged by the
+    framework's own loop-blocking detector. LiveKit runs one job process per
+    call, so a fresh process pays it EVERY call, not once.
+
+    Called from `setup_fnc`, which runs while a pre-warmed process sits idle
+    with nobody on the phone. Same 888ms, spent where it costs nothing.
+
+    WHY IT IS NOT JUST A TOP-LEVEL IMPORT. Hoisting `import opik` to module
+    scope would also remove the stall -- and would break the claim this whole
+    seam exists to make. Deleting `opik_integration.py` must leave a working
+    agent, and a module-level import makes that false. Here, a missing package
+    or a deleted module means the prewarm quietly does nothing and the agent
+    runs exactly as before.
+
+    DO NOT "TIDY THIS AWAY". It looks like an import that does nothing, because
+    that is precisely what a warm-up is. Removing it silently reintroduces a
+    ~0.9s silence after every patient says hello.
+    """
+    if not opik_enabled():
+        return
+    try:
+        try:
+            from .opik_integration import OpikSink  # noqa: F401
+        except ImportError:
+            from src.opik_integration import OpikSink  # noqa: F401  (script mode)
+    except Exception:
+        # Debug, not warning. A prewarm that cannot run is not a problem --
+        # build_sink() will try again and report properly if it matters.
+        logger.debug("observability prewarm skipped; the sink will load on first use")
+        return
+    logger.debug("observability prewarm complete")
+
+
 def build_sink() -> GuardedSink:
     """The single selection point. Everything else takes whatever this returns.
 
@@ -172,8 +220,7 @@ def build_sink() -> GuardedSink:
     `opik_integration.py` degrades to the no-op sink instead of breaking the
     agent -- loudly, because silence would read as "my traces are being sent".
     """
-    enabled = (os.getenv("OPIK_ENABLED") or "").strip().lower() in ("1", "true", "yes")
-    if not enabled:
+    if not opik_enabled():
         logger.debug("observability: OPIK_ENABLED is not set, using the no-op sink")
         return GuardedSink(NoOpSink())
 
