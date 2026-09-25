@@ -94,10 +94,10 @@ The implementing agent should follow these, not relitigate them.
 | D11 | Verification is a **tool** (`verify_patient_identity`) **bound to the agent class**, not a module-level function | `RunContext` does not expose the chat context; tools reach agent state through `self`. Also yields a deterministic `identity_verified` event for analysis (D4), an auditable span in the Opik trace, and a sharp signal for the online eval. |
 | D12 | Health data passes ONLY through the verified agent's constructor. Never in `userdata`, never in tool names, descriptions, parameter names or enum values | Whether `userdata` is serialised into the prompt could not be verified; tool schemas demonstrably are sent to the model. Sidestep both rather than reason about them. |
 | D4 | `appointment_booked` is determined by **tool-call evidence**, not by LLM reading of the transcript | Ground truth from system events beats inference from text. The LLM classifies softer things only. |
-| D5 | Observability is behind a seam with a no-op default; Opik is one implementation | The brief demands a pluggable module. Deleting the Opik file must leave a working agent. **Confirmed viable by the Opik recon, not merely assumed:** `Opik.trace()` and `Opik.span()` both accept `start_time` and `end_time` (and `span()` takes `trace_id` / `parent_span_id`), so a whole trace can be assembled in memory during the call and emitted in one burst at the end carrying real historical timestamps. Live instrumentation is **not** required. The sink can therefore be a pure function of a finished `CallRecord`. Do not wire `opik_integration.py` into the call path on the assumption that Opik needs live hooks — that would destroy exactly the modularity the brief grades. |
+| D5 | Observability is behind a seam with a no-op default; Opik is one implementation | Pluggability is a primary goal of this project. Deleting the Opik file must leave a working agent. **Confirmed viable by the Opik recon, not merely assumed:** `Opik.trace()` and `Opik.span()` both accept `start_time` and `end_time` (and `span()` takes `trace_id` / `parent_span_id`), so a whole trace can be assembled in memory during the call and emitted in one burst at the end carrying real historical timestamps. Live instrumentation is **not** required. The sink can therefore be a pure function of a finished `CallRecord`. Do not wire `opik_integration.py` into the call path on the assumption that Opik needs live hooks — that would destroy exactly the modularity this design exists to demonstrate. |
 | D6 | "Online evaluation" is implemented as an Opik platform rule that scores traces automatically as they arrive | This is the platform-native reading of the requirement. The README explains the online vs offline distinction. |
 | D7 | The mock booking tool can fail and can return no availability | A tool that always succeeds proves nothing and gives the eval nothing to measure. |
-| D8 | Agent is stateless per call; the dispatcher is single-shot and synchronous | Simplest thing that satisfies the brief. Scaling is a documented gap, not a built feature. |
+| D8 | Agent is stateless per call; the dispatcher is single-shot and synchronous | Simplest thing that meets the goals set out in Section 1. Scaling is a documented gap, not a built feature. |
 | D13 | **Score deterministically wherever the property is decidable from the trace. Use LLM-as-a-judge only where the question is genuinely subjective.** | Whether a biomarker was disclosed before verification is *decidable*: the transcript and the verification span are both in the trace, both carry timestamps, and the answer is a comparison. Handing that to a judge injects position bias, leniency drift and self-inconsistency into a safety-critical check that has an exact answer — and a judge that is 95% reliable is a poor way to test a property that is either true or false. Judges are reserved for questions with no computable ground truth, such as whether an explanation was clear and appropriately non-alarming. This governs Phase 7: reach for code first, and justify any judge by the absence of a computable answer. |
 
 ---
@@ -780,14 +780,14 @@ and `discrepancy` is set.
 
 1. `opik_integration.py` — one file, implementing `ObservabilitySink`. It is the
    only file in the repo that imports Opik.
-2. Log per the brief:
+2. Log the following:
    - **Call metadata and variables** — patient id, name, phone (see note),
      biomarkers passed in, room name, call id, duration, end reason
    - **Conversation / transcript** — turn by turn
    - **Call recording** — **attach the real `.wav`.** `audio/wav` is a supported
      preview type and `Attachment(data=<path>, content_type="audio/wav")` works
      on the explicit client. The earlier "or fall back to a URI reference" hedge
-     is withdrawn: the brief permits a reference, but a playable attachment in
+     is withdrawn: a reference would be acceptable, but a playable attachment in
      the trace is a materially better artifact and it is verified as available.
      Keep the URI only as a genuine last resort — if the recording itself fails.
    - **Tool calls and results** — as child spans, with arguments and results
@@ -1016,7 +1016,7 @@ appointment, and produces a full Opik trace with an eval score.
 
 ## PHASE 9 — README and demo
 
-**Goal:** the deliverables the brief names explicitly.
+**Goal:** the deliverables this project set out to produce.
 
 **Tasks**
 
@@ -1048,7 +1048,7 @@ appointment, and produces a full Opik trace with an eval score.
 | Phase 0 Opik recon | **Highest.** Unfamiliar SDK; API may differ from any assumption in this plan | Do it first; report honestly; the plan bends to the docs, not the reverse |
 | Phase 7 online eval config | High. "Online evaluation" may mean something specific in the product | Confirm the exact mechanism before designing the metric |
 | Phase 4 shutdown hook | High. Silent data loss if the process exits before analysis and flush complete | Test explicitly by inspecting output after a normal call end |
-| Phase 6 audio attachment | Medium. Attachment support may not match expectation | Fall back to URI reference; the brief permits "or audio reference" |
+| Phase 6 audio attachment | Medium. Attachment support may not match expectation | Fall back to URI reference; an audio reference is an acceptable substitute |
 | Phase 2a handoff | **Low — resolved in recon.** Handoff is documented and the audio session continues uninterrupted | Prove empirically in the Phase 2a exit test, scenarios 1, 2 and 5 |
 | Version drift | **Medium.** Recon read framework source from `main`, which may differ from the released package | Pin an exact version in `requirements.txt`; re-confirm the API against the installed package at the start of Phase 2 |
 | Phase 2 LiveKit Agents API | Medium. Framework has moved fast | Work from the current quickstart only |

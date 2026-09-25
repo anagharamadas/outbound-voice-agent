@@ -129,7 +129,7 @@ Also works on the explicit client — `client.trace(..., attachments=[...])` and
 
 **Audio MIME types supported for UI preview: `audio/wav`, `audio/vorbis`, `audio/x-wav`.** A `.wav` recording is covered.
 
-**Consequence for the brief:** the brief said "call recording *or* audio reference". The stronger option is available — attach the real file, and keep a URI reference only as a last resort if recording itself fails.
+**Consequence for this project:** a recording and an audio reference are equally acceptable. The stronger option is available — attach the real file, and keep a URI reference only as a last resort if recording itself fails.
 
 ### Size and type limits
 

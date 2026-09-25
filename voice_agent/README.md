@@ -364,8 +364,8 @@ Console and phone calls differ, because the audio is in different places.
 
 To get a *fetchable* file from a phone call, point the egress `file_outputs` at
 an S3/GCP/Azure bucket in `start_call_recording()`. Without a bucket the file
-lands on LiveKit's own egress server, which your process cannot read. The brief
-permits "call recording **or** audio reference"; this is the reference.
+lands on LiveKit's own egress server, which your process cannot read. Either a
+recording or an audio reference is acceptable here; this is the reference.
 
 > The job log shows `enable_recording: true` on every job. That is LiveKit
 > Cloud's own session flag and produces **no** egress — verified, it yielded zero
@@ -461,10 +461,10 @@ build, each citing the evidence that changed it — is in
 | D2 | Biomarker *interpretation* is precomputed in the data file | Safety. The model reads a pre-set status string; it never decides clinical meaning. |
 | D3 | Identity gate before any biomarker is spoken | The core requirement. |
 | D4 | `appointment_booked` comes from **tool evidence**, never from the LLM reading the transcript | Ground truth beats inference. A call can *sound* like a booking while the tool failed. |
-| D5 | Observability behind a seam, no-op default | The brief demands pluggability. Deleting the Opik file must leave a working agent. |
+| D5 | Observability behind a seam, no-op default | Pluggability is a primary goal. Deleting the Opik file must leave a working agent. |
 | D6 | Online evaluation is a platform rule scoring traces as they arrive | The platform-native reading of the requirement. |
 | D7 | The mock booking tool can fail and can return no slots | A tool that always succeeds proves nothing and gives the eval nothing to measure. |
-| D8 | Stateless per call; dispatcher single-shot | Simplest thing that satisfies the brief. Scaling is a documented gap, not a built feature. |
+| D8 | Stateless per call; dispatcher single-shot | Simplest thing that meets the goals. Scaling is a documented gap, not a built feature. |
 | D9 | Verification is KBA — confirm the name, then ask for **one** identifier | Standard in healthcare telephony. One identifier only: each extra one multiplies the STT failure surface. |
 | D10 | **Code-enforced gate via agent handoff** — two classes, health data in neither the prompt nor the unverified object | The agent cannot disclose what it was never constructed with. Checkable by reading a constructor. |
 | D11 | Verification is a tool bound to the agent class | Tools reach agent state through `self`; also yields a deterministic, auditable event. |

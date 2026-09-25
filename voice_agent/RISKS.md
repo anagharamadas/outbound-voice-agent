@@ -361,8 +361,8 @@ A phone call's audio never touches the local machine, so recording requires a
 LiveKit egress, and the egress writes to whatever storage the request names.
 With no bucket configured it writes to LiveKit's own egress server.
 
-Captured instead: the egress id and reported location. The brief permits "call
-recording **or** audio reference". Console calls still attach playable audio.
+Captured instead: the egress id and reported location — a recording and an audio
+reference are equally acceptable. Console calls still attach playable audio.
 
 **Upgrade path:** configure an S3/GCP/Azure bucket in `start_call_recording()`;
 the same code then yields a fetchable file ([I10](DECISIONS.md#i10--phone-call-audio-is-a-reference-not-a-file)).

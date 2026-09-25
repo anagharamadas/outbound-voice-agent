@@ -27,8 +27,8 @@ A speech-to-speech model would be lower latency and sound more natural.
 **Chosen anyway:** the pipeline produces a discrete transcript and discrete tool
 calls. Every later phase depends on that — the call record, the deterministic
 outcome analysis, the trace span tree, and an evaluation rule that compares turn
-ordering. A speech-to-speech model yields audio and a weaker transcript, and the
-observability requirement is a graded part of the brief.
+ordering. A speech-to-speech model yields audio and a weaker transcript, and
+observability is a first-class requirement of this project.
 
 **Cost:** measurably more latency per turn.
 
@@ -193,7 +193,7 @@ the end. Live instrumentation is not required.
 
 **Consequence:** the sink never touches the call path, which is what keeps D5
 honest. Wiring Opik in as live hooks would have destroyed exactly the modularity
-the brief grades.
+this design exists to demonstrate.
 
 ---
 
@@ -313,8 +313,8 @@ touches it, so recording requires an egress, and the egress writes to whatever
 storage the request names. With none named it writes to LiveKit's own egress
 server, which this process cannot read.
 
-So the egress id and reported location are captured instead. The brief permits
-"call recording **or** audio reference".
+So the egress id and reported location are captured instead — a recording and an
+audio reference are equally acceptable.
 
 **Upgrade path:** point `file_outputs` at an S3/GCP/Azure bucket and the same
 code yields a fetchable file. See [R-08](RISKS.md#r-08).

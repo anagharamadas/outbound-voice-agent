@@ -15,7 +15,7 @@ NOTE ON PII -- read before running this against a real patient.
     process, or (b) running a self-hosted Opik deployment inside the same trust
     boundary as the patient data. Opik supports self-hosting; see
     docs/recon-opik.md section 4. The phone number in particular is logged in
-    full below because the brief asks for call metadata -- in production it
+    full below because call metadata is part of what this logs -- in production it
     would be masked to the last four digits, as src/config.py already does for
     its own logging.
 

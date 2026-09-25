@@ -148,8 +148,8 @@ AUDIO_EXTENSIONS = (".wav", ".ogg")
 # And the file it writes lands in whatever bucket the request names. With none
 # named it goes to the egress server's own disk, which on LiveKit Cloud this
 # process cannot read. So what is captured here is the REFERENCE -- the egress
-# id, and the location egress reports -- which is what the brief permits
-# ("call recording or audio reference") and what PLAN.md task 5 specifies as the
+# id, and the location egress reports -- a recording and an audio reference
+# being equally acceptable here, and what PLAN.md task 5 specifies as the
 # fallback. Point CALL_RECORDING_BUCKET_URI at real storage and the same code
 # yields a fetchable file.
 #
