@@ -51,17 +51,17 @@ Do not re-configure telephony.
 
 | Component | Exists because |
 |---|---|
-| Patient record store (JSON file) | Agent is invoked with name, phone, biomarkers |
-| CLI dispatcher | Something must trigger one outbound call for one patient |
-| LiveKit voice agent | Core requirement |
-| Two-agent gate (`UnverifiedAgent` / `VerifiedAgent`) | Agent must know who it is calling, without holding health data before verification |
-| Identity verification gate | Do not disclose health data to whoever answers |
-| `book_appointment` mock tool | Required: simulate booking with a function call |
-| Call event seam | Required: Opik must plug in with minimal core changes |
-| Post-call analysis module | Required: determine call outcome |
-| `opik_integration.py` (single module) | Required: standalone, modular |
-| One Opik online evaluation | Required: at least one |
-| README + demo recording | Required deliverables |
+| Patient record store (JSON file) | The agent has to be told who to call and what to tell them. A JSON file is the smallest thing that does that without adding a database to the build. |
+| CLI dispatcher | Something has to trigger one outbound call for one patient, and a CLI keeps the trigger inspectable. |
+| LiveKit voice agent | The thing being built. |
+| Two-agent gate (`UnverifiedAgent` / `VerifiedAgent`) | The agent must know who it is calling without holding that person's health data before it knows who answered. |
+| Identity verification gate | Health data must not reach whoever happens to pick up the phone. |
+| `book_appointment` mock tool | The call has to achieve something, and a tool call makes the outcome derivable from system events rather than inferred from the transcript. |
+| Call event seam | Observability has to attach without the agent knowing it exists, or the module is not really pluggable. |
+| Post-call analysis module | A call that leaves no structured record of what happened cannot be measured, audited, or improved. |
+| `opik_integration.py` (single module) | One file that can be deleted without breaking the agent. That deletability is the whole demonstration of the seam. |
+| One Opik online evaluation | Tracing alone only proves data arrived. An evaluation proves the data is good enough to answer a question about the call. |
+| README + demo recording | Nobody can assess a voice agent from source code alone — it has to be heard working. |
 
 ### Explicitly out of scope — do not build
 
