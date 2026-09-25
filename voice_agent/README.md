@@ -20,7 +20,7 @@ and implementation, each with the evidence that drove it.
 [RISKS.md](RISKS.md) — the risk register, including four issues that occurred
 during the build and how they were caught.
 
-**Demo:** [`demo_recording.mp4`](../demo_recording.mp4) — a real
+**Demo:** **[watch the recording (7:15)](DEMO_VIDEO_URL)** — a real
 outbound call placed from the terminal, the post-call analysis, and the Opik
 trace with its evaluation score. The two traces shown are exported alongside it
 as [`clip1_opik_trace.json`](../clip1_opik_trace.json) (identity verified,
@@ -28,21 +28,16 @@ appointment booked) and [`clip2_opik_trace.json`](../clip2_opik_trace.json)
 (identity **not** verified — note that no biomarker appears anywhere in that
 transcript, and there is no `book_appointment` span).
 
-> **The worker's live view during both demo calls:**
-> [`worker_terminal_screenshot.png`](../worker_terminal_screenshot.png). The
-> contrast between the two calls is the whole argument in one screen — the first
+> **The worker's live view during both demo calls** is shown in the recording.
+> The contrast between the two calls is the whole argument in one screen — the first
 > reaches `IDENTITY VERIFIED … handing off to VerifiedAgent`, the second shows
 > `VERIFICATION FAILED` twice and **no handoff line at all**. `VerifiedAgent` was
 > never constructed on that call, which is why no biomarker could be spoken.
 >
 > **Note on the demo recording — the post-call analysis.** At around 5:00 the
 > main recording shows `No analysis on this record` where the post-call analysis
-> should be. That message is wrong, and the two short addenda below show the
-> same two calls rendering correctly:
-> [`addendum_clip1_post_call_analysis.mov`](../addendum_clip1_post_call_analysis.mov)
-> (21s) and
-> [`addendum_clip2_post_call_analysis.mov`](../addendum_clip2_post_call_analysis.mov)
-> (12s).
+> should be. That message is wrong. It is a defect in the presenter script, not
+> in the agent, and the cause is worth stating rather than editing away.
 >
 > **What happened.** `finish_call` writes the call record to disk *immediately*,
 > so a complete record survives whatever follows, and only then runs the

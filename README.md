@@ -41,24 +41,29 @@ Four documents live inside it, each answering a different question:
 
 ### The demo
 
+**▶ [Watch the demo (7:15)](DEMO_VIDEO_URL)** — a real outbound call placed from
+the terminal and answered on a handset, then a second call demonstrating the
+identity gate, with the post-call analysis and the Opik trace.
+
+The recording also shows the agent worker's live view across both calls, which
+is the whole argument in one screen: the first call reaches
+`IDENTITY VERIFIED … handing off to VerifiedAgent`; the second shows
+`VERIFICATION FAILED` twice and **no handoff line at all**.
+
+The two Opik traces below are exported into this repo so you can read exactly
+what the platform received:
+
 | File | What it shows |
 |---|---|
-| [`demo_recording.mp4`](demo_recording.mp4) **(7:15)** | The main demo. A real outbound call placed from the terminal and answered on a handset, then a second call demonstrating the identity gate, with the post-call analysis and the Opik trace. |
-| [`worker_terminal_screenshot.png`](worker_terminal_screenshot.png) | The agent worker's live view during **both** calls. The contrast is the whole argument: the first reaches `IDENTITY VERIFIED … handing off to VerifiedAgent`; the second shows `VERIFICATION FAILED` twice and **no handoff line at all**. |
 | [`clip1_opik_trace.json`](clip1_opik_trace.json) | The Opik trace for call 1, exported. Identity verified, appointment booked. Four spans — the conversation and one per tool call, each with arguments and result. Scored `no_premature_disclosure = 1.0`. |
 | [`clip2_opik_trace.json`](clip2_opik_trace.json) | The Opik trace for call 2. Identity **not** verified. Both `verify_patient_identity` spans failed, there is **no `book_appointment` span**, and **no biomarker appears anywhere** in the transcript. |
 
 > The trace exports are included because the Opik project is private — they let
 > you read exactly what the platform received without needing an account.
 
-### Two short addenda
+### A defect visible in the recording, and why it is left in
 
-| File | Why it exists |
-|---|---|
-| [`addendum_clip1_post_call_analysis.mov`](addendum_clip1_post_call_analysis.mov) **(0:21)** | Call 1's post-call analysis, rendering correctly. |
-| [`addendum_clip2_post_call_analysis.mov`](addendum_clip2_post_call_analysis.mov) **(0:12)** | Call 2's post-call analysis, rendering correctly. |
-
-**Why these are here.** At around 5:00 the main recording shows
+At around 5:00 the recording shows
 `No analysis on this record` where the post-call analysis should be. That
 message is wrong, and the cause is worth stating plainly rather than editing
 away:
@@ -73,15 +78,19 @@ analysis existed, and then guessed at a cause it had no evidence for.
 
 **The agent was never at fault.** Both calls analysed correctly within seconds,
 and the results are visible in the trace exports above, which were taken before
-this was noticed. The defect was in a presentation tool. It is fixed, and the
-addenda re-render the **same saved records** — no calls were re-placed.
+this was noticed. The defect was in a presentation tool, and it is fixed — the
+fix re-renders the **same saved records**, so no calls were re-placed to prove
+it.
 
 ---
 
 ## The shortest path through this
 
-1. **Watch** [`demo_recording.mp4`](demo_recording.mp4) — a real call, start to finish.
-2. **Look at** [`worker_terminal_screenshot.png`](worker_terminal_screenshot.png) — the gate holding, and failing to hold, side by side.
+1. **[Watch the demo](DEMO_VIDEO_URL)** — a real call, start to finish, with the
+   gate holding and then failing to hold.
+2. **Skim** [`clip1_opik_trace.json`](clip1_opik_trace.json) and
+   [`clip2_opik_trace.json`](clip2_opik_trace.json) — the same two calls as the
+   platform received them.
 3. **Read** [`voice_agent/README.md`](voice_agent/README.md) — what it is and how to run it.
 4. **If you have ten more minutes**, [`voice_agent/DECISIONS.md`](voice_agent/DECISIONS.md) is where the reasoning lives.
 
